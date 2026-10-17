@@ -1,0 +1,32 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "rik-web-analytics",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // 画面（public/）も含めて全リクエストを Worker 経由にし、Access の JWT を検証する
+  "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": true },
+
+  // `npx wrangler kv namespace create CACHE` で作成した ID に置き換える
+  "kv_namespaces": [{ "binding": "CACHE", "id": "REPLACE_WITH_KV_NAMESPACE_ID" }],
+
+  // 30分ごとにデータを先読み、07:00 JST（22:00 UTC）にAIアドバイスを更新。
+  // 先読みの間隔を短くすると KV の書き込み回数が増える（無料枠は1日1,000回）
+  "triggers": { "crons": ["*/30 * * * *", "0 22 * * *"] },
+
+  // workers.dev のURLで公開し、Cloudflare Access をかける（docs/SETUP.md 参照）。
+  // 自社ドメインで公開する場合は routes を設定して workers_dev を false にする
+  "workers_dev": true,
+  // "routes": [{ "pattern": "analytics.example.co.jp", "custom_domain": true }],
+
+  "vars": {
+    "ACCESS_TEAM_DOMAIN": "",
+    "ACCESS_AUD": "",
+    "GOOGLE_ADS_API_VERSION": "v25",
+    "CACHE_TTL_SECONDS": "600",
+    "DEMO_MODE": "false"
+  },
+
+  "observability": { "enabled": true }
+}

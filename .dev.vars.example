@@ -1,0 +1,12 @@
+# ローカル開発用（wrangler dev）。このファイルを .dev.vars にコピーして値を入れてください。
+# .dev.vars は .gitignore 済みなのでコミットされません。
+DEMO_MODE="true"
+AUTH_DISABLED="true"
+# SITES_JSON='[{"id":"corp","name":"コーポレートサイト","url":"https://www.rikcorp.jp/","ga4PropertyId":"123456789","adsCustomerIds":["1234567890"]}]'
+# GOOGLE_SERVICE_ACCOUNT_JSON='{...}'
+# GOOGLE_ADS_DEVELOPER_TOKEN=""
+# GOOGLE_ADS_CLIENT_ID=""
+# GOOGLE_ADS_CLIENT_SECRET=""
+# GOOGLE_ADS_REFRESH_TOKEN=""
+# GOOGLE_ADS_LOGIN_CUSTOMER_ID=""
+# ANTHROPIC_API_KEY=""
