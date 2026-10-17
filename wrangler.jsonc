@@ -24,6 +24,7 @@
     "ACCESS_TEAM_DOMAIN": "",
     "ACCESS_AUD": "",
     "GOOGLE_ADS_API_VERSION": "v25",
+    "META_API_VERSION": "v24.0",
     "CACHE_TTL_SECONDS": "600",
     "DEMO_MODE": "false"
   },

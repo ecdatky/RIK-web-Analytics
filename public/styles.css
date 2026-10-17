@@ -23,6 +23,8 @@
   --ga4-bg: #fcefe7;
   --ads: #0e7f63;
   --ads-bg: #e2f4ee;
+  --meta: #6b4fc0;
+  --meta-bg: #f0ecfa;
   --on-src: #ffffff;
 }
 @media (prefers-color-scheme: dark) {
@@ -51,6 +53,8 @@
     --ga4-bg: #35210f;
     --ads: #3cc79f;
     --ads-bg: #10302a;
+    --meta: #a690f0;
+    --meta-bg: #241c3b;
     --on-src: #111110;
   }
 }
@@ -79,6 +83,8 @@
   --ga4-bg: #35210f;
   --ads: #3cc79f;
   --ads-bg: #10302a;
+  --meta: #a690f0;
+  --meta-bg: #241c3b;
   --on-src: #111110;
 }
 
@@ -198,10 +204,11 @@ tbody tr:hover { background: var(--surface-2); }
   .topbar, .tabs, .view, .foot { padding-left: 16px; padding-right: 16px; }
 }
 
-/* GA4 と Google広告 のセクションを色と見出しで区別する */
+/* GA4・Google広告・Meta広告 のセクションを色と見出しで区別する */
 .src { display: grid; gap: 16px; padding: 16px; border-radius: 14px; border: 1px solid var(--border); border-top: 4px solid var(--src); background: var(--surface-1); }
 .src-ga4 { --src: var(--ga4); --src-bg: var(--ga4-bg); }
 .src-ads { --src: var(--ads); --src-bg: var(--ads-bg); }
+.src-meta { --src: var(--meta); --src-bg: var(--meta-bg); }
 .src-head { display: flex; align-items: center; gap: 12px; }
 .src-head h2 { margin: 0; font-size: 18px; }
 .src-chip { background: var(--src); color: var(--on-src); font-weight: 700; font-size: 12px; padding: 4px 10px; border-radius: 6px; white-space: nowrap; }
@@ -223,3 +230,5 @@ h3.sub { margin: 4px 0 -6px; }
 .summary-table th.ads-grp { background: var(--ads); }
 .summary-table td.ga4-col { background: color-mix(in srgb, var(--ga4-bg) 50%, transparent); }
 .summary-table td.ads-col { background: color-mix(in srgb, var(--ads-bg) 50%, transparent); }
+.summary-table th.meta-grp { background: var(--meta); }
+.summary-table td.meta-col { background: color-mix(in srgb, var(--meta-bg) 50%, transparent); }

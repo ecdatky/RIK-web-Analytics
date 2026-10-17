@@ -50,6 +50,17 @@ const CHANNEL_TYPE_LABEL = {
   SMART: "スマート",
 };
 const MATCH_LABEL = { EXACT: "完全一致", PHRASE: "フレーズ一致", BROAD: "部分一致" };
+const PLATFORM_LABEL = { facebook: "Facebook", instagram: "Instagram", audience_network: "Audience Network", messenger: "Messenger", threads: "Threads" };
+const OBJECTIVE_LABEL = {
+  OUTCOME_LEADS: "リード獲得",
+  OUTCOME_TRAFFIC: "トラフィック",
+  OUTCOME_AWARENESS: "認知",
+  OUTCOME_ENGAGEMENT: "エンゲージメント",
+  OUTCOME_SALES: "売上",
+  OUTCOME_APP_PROMOTION: "アプリ",
+};
+// CVで評価しない目的（認知など）は「CVなし」の判定を付けない
+const NON_CV_OBJECTIVES = new Set(["OUTCOME_AWARENESS", "OUTCOME_ENGAGEMENT", "OUTCOME_TRAFFIC"]);
 
 async function api(path, opts) {
   const res = await fetch(path, opts);
@@ -168,7 +179,8 @@ function statusLine(report, stale) {
 function sourceHeader(kind, extra = "") {
   const conf = {
     ga4: { chip: "GA4", title: "サイトのアクセス解析", sub: "Googleアナリティクス4｜サイトに来た人の数と行動" },
-    ads: { chip: "Google広告", title: "広告の成果", sub: "Google広告｜広告費と、そこから得た成果" },
+    ads: { chip: "Google広告", title: "検索・ディスプレイ広告の成果", sub: "Google広告｜広告費と、そこから得た成果" },
+    meta: { chip: "Meta広告", title: "SNS広告の成果", sub: "Facebook・Instagram広告｜広告費と、そこから得た成果" },
   }[kind];
   return `<header class="src-head">
     <span class="src-chip">${conf.chip}</span>
@@ -192,11 +204,14 @@ async function renderSummary() {
   if (state.tab !== "summary") return;
   const body = rows
     .map(({ s, report, advice, error }) => {
-      if (error) return `<tr><td>${esc(s.name)}</td><td colspan="9" class="muted">${esc(error)}</td></tr>`;
+      if (error) return `<tr><td>${esc(s.name)}</td><td colspan="12" class="muted">${esc(error)}</td></tr>`;
       const g = report.ga4?.totals;
       const a = report.ads?.totals;
+      const m = report.meta?.totals;
       const cpa = a ? ratio(a.cost.current, a.conversions.current) : 0;
       const cpaPrev = a ? ratio(a.cost.previous, a.conversions.previous) : 0;
+      const mCpa = m ? ratio(m.spend.current, m.conversions.current) : 0;
+      const mCpaPrev = m ? ratio(m.spend.previous, m.conversions.previous) : 0;
       return `<tr>
         <td><button class="btn" data-goto="${esc(s.id)}">${esc(s.name)}</button></td>
         <td class="r ga4-col">${g ? fmtInt(g.activeUsers.current) : "-"}<br>${g ? delta(g.activeUsers.current, g.activeUsers.previous) : ""}</td>
@@ -206,14 +221,17 @@ async function renderSummary() {
         <td class="r ads-col">${a ? fmtYen(a.cost.current) : "-"}<br>${a ? delta(a.cost.current, a.cost.previous, null) : ""}</td>
         <td class="r ads-col">${a ? fmtDec(a.conversions.current) : "-"}</td>
         <td class="r ads-col">${a && a.conversions.current ? `${fmtYen(cpa)}<br>${delta(cpa, cpaPrev, false)}` : "-"}</td>
+        <td class="r meta-col">${m ? fmtYen(m.spend.current) : "-"}<br>${m ? delta(m.spend.current, m.spend.previous, null) : ""}</td>
+        <td class="r meta-col">${m ? fmtDec(m.conversions.current) : "-"}</td>
+        <td class="r meta-col">${m && m.conversions.current ? `${fmtYen(mCpa)}<br>${delta(mCpa, mCpaPrev, false)}` : "-"}</td>
         <td style="white-space:normal;min-width:260px">${advice ? esc(advice.summary) : '<span class="muted">未生成</span>'}</td>
       </tr>`;
     })
     .join("");
   $("#sum-body").innerHTML = `<table class="summary-table">
     <thead>
-      <tr><th></th><th colspan="4" class="grp ga4-grp">GA4｜サイトのアクセス</th><th colspan="3" class="grp ads-grp">Google広告｜広告の成果</th><th></th></tr>
-      <tr><th>サイト</th><th class="r">ユーザー</th><th class="r">セッション</th><th class="r">キーイベント</th><th class="r">CVR</th><th class="r">広告費</th><th class="r">広告CV</th><th class="r">CPA</th><th>AIのひとこと</th></tr>
+      <tr><th></th><th colspan="4" class="grp ga4-grp">GA4｜サイトのアクセス</th><th colspan="3" class="grp ads-grp">Google広告</th><th colspan="3" class="grp meta-grp">Meta広告</th><th></th></tr>
+      <tr><th>サイト</th><th class="r">ユーザー</th><th class="r">セッション</th><th class="r">キーイベント</th><th class="r">CVR</th><th class="r">広告費</th><th class="r">広告CV</th><th class="r">CPA</th><th class="r">広告費</th><th class="r">広告CV</th><th class="r">CPA</th><th>AIのひとこと</th></tr>
     </thead>
     <tbody>${body}</tbody></table>`;
 }
@@ -415,6 +433,105 @@ function renderAds(a) {
   </section>`;
 }
 
+/** Meta広告の費用対効果の目安。平均CPAとの比較とフリークエンシーで判定する */
+function judgeMeta(x, avgCpa, objective) {
+  const tags = [];
+  if (!x.conversions) {
+    if (avgCpa && x.spend > avgCpa && !NON_CV_OBJECTIVES.has(objective)) tags.push(["bad", "CVなし"]);
+  } else if (avgCpa) {
+    const cpa = x.spend / x.conversions;
+    if (cpa <= avgCpa * 0.8) tags.push(["good", "効率良"]);
+    else if (cpa >= avgCpa * 1.5) tags.push(["bad", "割高"]);
+  }
+  if (x.reach && x.impressions / x.reach >= 3) tags.push(["warn", "表示過多"]);
+  return tags.map(([cls, label]) => `<span class="judge ${cls}">${label}</span>`).join("");
+}
+
+function renderMeta(m) {
+  const t = m.totals;
+  const r = (a, b) => [ratio(t[a].current, t[b].current), ratio(t[a].previous, t[b].previous)];
+  const [ctr, ctrPrev] = r("clicks", "impressions");
+  const [cpc, cpcPrev] = r("spend", "clicks");
+  const [cvr, cvrPrev] = r("conversions", "clicks");
+  const [cpa, cpaPrev] = r("spend", "conversions");
+  const [freq, freqPrev] = r("impressions", "reach");
+  const [roas, roasPrev] = r("conversionsValue", "spend");
+  const cpm = ratio(t.spend.current * 1000, t.impressions.current);
+  const cpmPrev = ratio(t.spend.previous * 1000, t.impressions.previous);
+  const hasValue = t.conversionsValue.current > 0 || t.conversionsValue.previous > 0;
+  const avgCpa = t.conversions.current ? cpa : 0;
+  const cvLabel = m.conversionActions.join(", ");
+  const multi = m.accounts.length > 1;
+
+  return `<section class="src src-meta">
+  ${sourceHeader("meta", `アカウント ${m.accounts.map(esc).join(", ")}`)}
+  <div class="card advice-box" id="advice-meta"><p class="muted">AIの総評を読み込み中…</p></div>
+
+  <h3 class="sub">費用と成果</h3>
+  <div class="tiles">
+    ${tile("広告費", fmtYen(t.spend.current), delta(t.spend.current, t.spend.previous, null))}
+    ${tile("コンバージョン（CV）", fmtDec(t.conversions.current), delta(t.conversions.current, t.conversions.previous), `CVとして数えている指標: ${cvLabel}`)}
+    ${tile("CPA（1件あたりの獲得単価）", t.conversions.current ? fmtYen(cpa) : "-", t.conversions.current ? delta(cpa, cpaPrev, false) : "", "広告費 ÷ CV。低いほど効率が良い")}
+    ${tile("CVR（リンククリック→CV）", fmtPct(cvr), delta(cvr, cvrPrev), "CV ÷ リンククリック")}
+    ${hasValue ? tile("ROAS（CV値÷広告費）", fmtPct(roas), delta(roas, roasPrev)) : ""}
+  </div>
+  <h3 class="sub">露出と反応</h3>
+  <div class="tiles">
+    ${tile("表示回数", fmtInt(t.impressions.current), delta(t.impressions.current, t.impressions.previous))}
+    ${tile(multi ? "リーチ（アカウント合算）" : "リーチ", fmtInt(t.reach.current), delta(t.reach.current, t.reach.previous), "広告を見た人の数。複数アカウントは重複を除けないため目安")}
+    ${tile("フリークエンシー", fmtDec(freq), `<span class="delta ${freq >= 3 ? "bad" : "flat"}">1人あたりの表示回数${freq >= 3 ? "（多め）" : ""}</span>`, "表示回数 ÷ リーチ。3回を超えると見飽きで効率が落ちやすい")}
+    ${tile("リンククリック", fmtInt(t.clicks.current), delta(t.clicks.current, t.clicks.previous))}
+    ${tile("CTR（リンククリック率）", fmtPct(ctr), delta(ctr, ctrPrev))}
+    ${tile("CPC（クリック単価）", fmtYen(cpc), delta(cpc, cpcPrev, false))}
+    ${tile("CPM（1,000回表示単価）", fmtYen(cpm), delta(cpm, cpmPrev, false))}
+  </div>
+
+  <div class="grid grid-2">
+    <div class="card"><h3>日別の広告費</h3><div class="chart-box sm"><canvas id="meta-spend"></canvas></div></div>
+    <div class="card"><h3>日別のコンバージョン</h3><div class="chart-box sm"><canvas id="meta-conv"></canvas></div></div>
+  </div>
+
+  <div class="card"><h3>キャンペーン別の費用対効果（費用順）</h3>
+    <p class="muted small">判定は平均CPA（${avgCpa ? fmtYen(avgCpa) : "-"}）との比較です。効率良: 平均の0.8倍以下 / 割高: 1.5倍以上 / CVなし: 平均CPA以上使ってCV0（認知・トラフィック目的は除く）/ 表示過多: フリークエンシー3回以上</p>
+    <div class="table-wrap"><table>
+    <thead><tr><th>キャンペーン</th><th>目的</th><th class="r">費用</th><th class="r">リーチ</th><th class="r">頻度</th><th class="r">クリック</th><th class="r">CTR</th><th class="r">CV</th><th class="r">CVR</th><th class="r">CPA</th>${hasValue ? '<th class="r">ROAS</th>' : ""}<th>判定</th></tr></thead>
+    <tbody>${m.campaigns
+      .map(
+        (c) => `<tr><td class="path" title="${esc(c.name)}">${esc(c.name)}</td>
+        <td class="muted small">${esc(OBJECTIVE_LABEL[c.objective] ?? c.objective)}</td><td class="r">${fmtYen(c.spend)}</td>
+        <td class="r">${fmtInt(c.reach)}</td><td class="r">${c.reach ? fmtDec(c.impressions / c.reach) : "-"}</td>
+        <td class="r">${fmtInt(c.clicks)}</td><td class="r">${fmtPct(ratio(c.clicks, c.impressions))}</td><td class="r">${fmtDec(c.conversions)}</td>
+        <td class="r">${fmtPct(ratio(c.conversions, c.clicks))}</td><td class="r">${c.conversions ? fmtYen(c.spend / c.conversions) : "-"}</td>
+        ${hasValue ? `<td class="r">${c.spend ? fmtPct(c.conversionsValue / c.spend) : "-"}</td>` : ""}
+        <td>${judgeMeta(c, avgCpa, c.objective)}</td></tr>`,
+      )
+      .join("") || `<tr><td colspan="11" class="muted">データなし</td></tr>`}</tbody>
+  </table></div></div>
+
+  <div class="grid grid-2">
+    <div class="card"><h3>配信面別の費用対効果</h3><div class="table-wrap"><table>
+      <thead><tr><th>配信面</th><th class="r">費用</th><th class="r">クリック</th><th class="r">CTR</th><th class="r">CV</th><th class="r">CPA</th></tr></thead>
+      <tbody>${m.platforms
+        .map(
+          (p) => `<tr><td>${esc(PLATFORM_LABEL[p.platform] ?? p.platform)}</td><td class="r">${fmtYen(p.spend)}</td><td class="r">${fmtInt(p.clicks)}</td>
+          <td class="r">${fmtPct(ratio(p.clicks, p.impressions))}</td><td class="r">${fmtDec(p.conversions)}</td><td class="r">${p.conversions ? fmtYen(p.spend / p.conversions) : "-"}</td></tr>`,
+        )
+        .join("") || `<tr><td colspan="6" class="muted">データなし</td></tr>`}</tbody>
+    </table></div></div>
+    <div class="card"><h3>広告（クリエイティブ）別（費用順）</h3><div class="table-wrap"><table>
+      <thead><tr><th>広告</th><th class="r">費用</th><th class="r">CTR</th><th class="r">CV</th><th class="r">CPA</th><th></th></tr></thead>
+      <tbody>${m.ads
+        .map(
+          (x) => `<tr><td class="path" title="${esc(x.name)}">${esc(x.name)}<small>${esc(x.campaign)}</small></td>
+          <td class="r">${fmtYen(x.spend)}</td><td class="r">${fmtPct(ratio(x.clicks, x.impressions))}</td><td class="r">${fmtDec(x.conversions)}</td>
+          <td class="r">${x.conversions ? fmtYen(x.spend / x.conversions) : "-"}</td><td>${judgeMeta(x, avgCpa)}</td></tr>`,
+        )
+        .join("") || `<tr><td colspan="6" class="muted">データなし</td></tr>`}</tbody>
+    </table></div></div>
+  </div>
+  </section>`;
+}
+
 const TONE_LABEL = { good: "好調", warning: "注意", critical: "要対応", info: "参考" };
 const PRIO_LABEL = { high: "優先度 高", medium: "優先度 中", low: "優先度 低" };
 
@@ -446,6 +563,8 @@ function renderAdvice(advice, siteId) {
   if (ga4) ga4.innerHTML = advice?.ga4 ? adviceSection(advice.ga4, "GA4") : `<p class="muted small">GA4のAI総評はまだありません。</p>`;
   const ads = $("#advice-ads");
   if (ads) ads.innerHTML = advice?.ads ? adviceSection(advice.ads, "Google広告") : `<p class="muted small">Google広告のAI総評はまだありません。</p>`;
+  const metaBox = $("#advice-meta");
+  if (metaBox) metaBox.innerHTML = advice?.meta ? adviceSection(advice.meta, "Meta広告") : `<p class="muted small">Meta広告のAI総評はまだありません。「今の期間で作り直す」で作成できます。</p>`;
 }
 
 function drawTrend(g) {
@@ -483,7 +602,12 @@ async function renderSite(siteId) {
   const draw = (report, stale) => {
     if (state.tab !== siteId) return;
     destroyCharts();
-    const errors = [report.ga4Error && `GA4: ${report.ga4Error}`, report.adsError && `Google広告: ${report.adsError}`].filter(Boolean);
+    const errors = [
+      report.ga4Error && `GA4: ${report.ga4Error}`,
+      report.adsError && `Google広告: ${report.adsError}`,
+      report.metaError && `Meta広告: ${report.metaError}`,
+    ].filter(Boolean);
+    const noAds = [!site.hasAds && "Google広告", !site.hasMeta && "Meta広告"].filter(Boolean);
     view.innerHTML = `
       <div class="statusline"><h2 style="margin:0">${esc(site.name)}</h2>${site.url ? `<a class="small" href="${esc(site.url)}" target="_blank" rel="noopener">${esc(site.url)}</a>` : ""}</div>
       ${statusLine(report, stale)}
@@ -492,12 +616,18 @@ async function renderSite(siteId) {
       <div class="card advice" id="advice"><p class="muted">AIの総評を読み込み中…</p></div>
       ${report.ga4 ? renderGa4(report.ga4) : ""}
       ${report.ads ? renderAds(report.ads) : ""}
-      ${!site.hasAds ? `<p class="muted small">このサイトにはGoogle広告アカウントが紐付いていません。</p>` : ""}`;
+      ${report.meta ? renderMeta(report.meta) : ""}
+      ${noAds.length ? `<p class="muted small">このサイトには${noAds.join("・")}のアカウントが紐付いていません。</p>` : ""}`;
     if (report.ga4) drawTrend(report.ga4);
     if (report.ads) {
       const labels = report.ads.daily.map((d) => md(d.date));
       barChart($("#ads-cost"), labels, report.ads.daily.map((d) => d.cost), "広告費", fmtYen);
       barChart($("#ads-conv"), labels, report.ads.daily.map((d) => d.conversions), "コンバージョン", fmtDec);
+    }
+    if (report.meta) {
+      const labels = report.meta.daily.map((d) => md(d.date));
+      barChart($("#meta-spend"), labels, report.meta.daily.map((d) => d.spend), "広告費", fmtYen);
+      barChart($("#meta-conv"), labels, report.meta.daily.map((d) => d.conversions), "コンバージョン", fmtDec);
     }
     $("#metric-seg")?.addEventListener("click", (e) => {
       const m = e.target.closest("button")?.dataset.metric;

@@ -11,6 +11,7 @@
 | 3 | Cloudflare Access の設定 | Web担当 | チームドメイン / AUD タグ |
 | 4 | GA4 用サービスアカウント | GCP 管理者 + GA4 管理者 | サービスアカウントの JSON 鍵 / プロパティID |
 | 5 | Google広告 API の準備 | 広告MCC 管理者 | 開発者トークン / OAuth 情報 / MCC ID |
+| 5-2 | Meta広告 API の準備 | ビジネスマネージャ管理者 | システムユーザーのアクセストークン / 広告アカウントID |
 | 6 | Claude API キー | 契約者 | API キー |
 | 7 | シークレット登録とデプロイ | Web担当 | ダッシュボードのURL |
 
@@ -80,6 +81,24 @@ Worker 側でも Access の署名付きトークン（`Cf-Access-Jwt-Assertion`�
    - OAuth 同意画面が「テスト」状態だとリフレッシュトークンが7日で失効します。「本番」にするか、Google Workspace の内部アプリにしてください
 5. MCC の顧客ID（`123-456-7890` 形式）と、各広告アカウント（3つ）の顧客IDを控える
 
+## 5-2. Meta広告 API の準備
+
+Facebook・Instagram 広告のデータは Meta Marketing API（Insights API）で取得します。読み取り専用の権限だけを使います。
+
+1. [Meta for Developers](https://developers.facebook.com/apps/) でアプリを作成
+   - 種類は「ビジネス」、ビジネスポートフォリオは自社のものを選択
+   - アプリに「マーケティングAPI」を追加
+   - 社内利用だけなら、アプリは開発モードのままで構いません（自社ビジネスの広告アカウントのデータは取得できます）
+2. [ビジネス設定](https://business.facebook.com/settings/) → ユーザー → **システムユーザー** → 追加（役割: 従業員）
+3. 作ったシステムユーザーに「アセットを追加」→ 広告アカウント → 対象の広告アカウントを選び、**パフォーマンスを確認（閲覧）** の権限を付与
+4. 同じシステムユーザーに手順1のアプリを割り当て（アプリ → 管理を付与）
+5. システムユーザーの「新しいトークンを生成」→ 手順1のアプリを選択 → 有効期限は「なし」→ 権限 `ads_read` にチェック → 生成したトークンを控える
+   - このトークンは画面を閉じると再表示できません。紛失した場合は作り直してください
+6. アプリの 設定 → ベーシック にある **app secret** を控える（任意。登録するとAPI呼び出しに署名を付けるので、トークン単体が漏れても使われにくくなります）
+7. 各広告アカウントの **広告アカウントID**（広告マネージャのURL `act=` の後ろの数字）を控える
+
+コンバージョンとして数える指標は、既定で「リード」（`lead`。Metaピクセルのリードとリード獲得フォームの合計）です。資料請求などをカスタムコンバージョンで計測している場合は、手順7の `metaConversionActions` に action_type（例: `offsite_conversion.custom.123456789`）を指定してください。重複する種類（`lead` と `offsite_conversion.fb_pixel_lead` など）を両方入れると二重に数えます。
+
 ## 6. Claude API キー
 
 [Claude Console](https://platform.claude.com/) で API キーを発行します。AIアドバイスは毎朝7時に各サイト1回と、画面の「作り直す」ボタンで生成されます（同じサイトは5分以内に再生成しない制限あり）。
@@ -90,7 +109,7 @@ Worker 側でも Access の署名付きトークン（`Cf-Access-Jwt-Assertion`�
 
 ```json
 [
-  { "id": "corp", "name": "コーポレートサイト", "url": "https://www.rikcorp.jp/", "ga4PropertyId": "123456789", "adsCustomerIds": ["111-111-1111"], "goal": "問い合わせ・資料請求の獲得" },
+  { "id": "corp", "name": "コーポレートサイト", "url": "https://www.rikcorp.jp/", "ga4PropertyId": "123456789", "adsCustomerIds": ["111-111-1111"], "metaAdAccountIds": ["1234567890123456"], "goal": "問い合わせ・資料請求の獲得" },
   { "id": "product", "name": "製品サイト", "ga4PropertyId": "234567890", "adsCustomerIds": ["222-222-2222"] },
   { "id": "rikshare", "name": "RIKシェア", "ga4PropertyId": "345678901", "adsCustomerIds": ["333-333-3333"] },
   { "id": "xxx", "name": "（4つ目のサイト）", "ga4PropertyId": "456789012" }
@@ -98,7 +117,8 @@ Worker 側でも Access の署名付きトークン（`Cf-Access-Jwt-Assertion`�
 ```
 
 - `id` はURLやキャッシュに使う英数字。`goal` は任意で、AIアドバイスの前提として使われます
-- 1サイトに複数の広告アカウントがある場合は `adsCustomerIds` に並べると合算されます
+- 1サイトに複数の広告アカウントがある場合は `adsCustomerIds` / `metaAdAccountIds` に並べると合算されます
+- `metaConversionActions`（任意）: Meta広告でCVとして数える action_type の配列。省略時は `["lead"]`
 
 ```bash
 npx wrangler secret put SITES_JSON                     # 上のJSONを貼り付け
@@ -108,6 +128,8 @@ npx wrangler secret put GOOGLE_ADS_CLIENT_ID
 npx wrangler secret put GOOGLE_ADS_CLIENT_SECRET
 npx wrangler secret put GOOGLE_ADS_REFRESH_TOKEN
 npx wrangler secret put GOOGLE_ADS_LOGIN_CUSTOMER_ID   # MCC の顧客ID
+npx wrangler secret put META_ACCESS_TOKEN              # 手順5-2のシステムユーザーのトークン
+npx wrangler secret put META_APP_SECRET                # 任意。手順5-2の app secret
 npx wrangler secret put ANTHROPIC_API_KEY
 npm run deploy
 ```
@@ -125,4 +147,8 @@ npm run deploy
   - `GA4 API エラー (403)`: サービスアカウントがそのプロパティに追加されていない
   - `Google広告 API エラー (401/403)`: 開発者トークンがテストアクセスのまま、またはリフレッシュトークンのアカウントに権限がない
   - `Google広告 API エラー (404)`: API バージョンのサンセット。`GOOGLE_ADS_API_VERSION` を新しい版に上げる
+  - `Meta広告 API エラー (400) Invalid OAuth access token`: トークンの貼り間違い、またはシステムユーザーのトークンが削除された
+  - `Meta広告 API エラー (403)` / `(#10)` `(#200)`: システムユーザーにその広告アカウントの権限がない、または `ads_read` が付いていない
+  - Meta広告のCVが0のまま: `metaConversionActions` が実際の計測と合っていない。広告マネージャの「結果」列で使っている指標を確認する
+- Meta の Graph API はバージョンごとに約2年で使えなくなります。`META_API_VERSION`（`wrangler.jsonc`）も年に1回見直してください
 - Google広告 API は毎月新バージョンが出て、各メジャー版は約1年で使えなくなります。年に1回は `GOOGLE_ADS_API_VERSION` を更新してください

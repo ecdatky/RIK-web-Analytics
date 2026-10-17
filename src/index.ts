@@ -46,6 +46,7 @@ async function handleApi(request: Request, env: Env, ctx: ExecutionContext, url:
           url: s.url,
           hasGa4: !!s.ga4PropertyId,
           hasAds: !!s.adsCustomerIds?.length,
+          hasMeta: !!s.metaAdAccountIds?.length,
         })),
       });
 

@@ -1,12 +1,12 @@
 // 認証情報が揃う前でも画面を確認できるようにするためのデモデータ。
 // 実データと混同しないよう、レスポンスには demo: true を付け、画面にも「デモ」と表示する。
-import type { Advice, AdsReport, CompareKey, DateRange, Ga4Report, RangeKey, SiteConfig } from "./types";
+import type { Advice, AdsReport, CompareKey, DateRange, Ga4Report, MetaReport, RangeKey, SiteConfig } from "./types";
 import { eachDay } from "./dates";
 
 export const DEMO_SITES: SiteConfig[] = [
-  { id: "corp", name: "コーポレートサイト", url: "https://www.rikcorp.jp/", ga4PropertyId: "demo", adsCustomerIds: ["demo-1"] },
+  { id: "corp", name: "コーポレートサイト", url: "https://www.rikcorp.jp/", ga4PropertyId: "demo", adsCustomerIds: ["demo-1"], metaAdAccountIds: ["demo-m1"] },
   { id: "product", name: "製品サイト", ga4PropertyId: "demo", adsCustomerIds: ["demo-2"] },
-  { id: "rikshare", name: "RIKシェア", ga4PropertyId: "demo", adsCustomerIds: ["demo-3"] },
+  { id: "rikshare", name: "RIKシェア", ga4PropertyId: "demo", adsCustomerIds: ["demo-3"], metaAdAccountIds: ["demo-m2"] },
   { id: "other", name: "その他サイト", ga4PropertyId: "demo" },
 ];
 
@@ -183,8 +183,89 @@ export function demoAds(site: SiteConfig, current: DateRange, _previous: DateRan
   };
 }
 
+export function demoMeta(site: SiteConfig, current: DateRange, compare: CompareKey): MetaReport {
+  const prevFactor = compare === "yoy" ? 0.7 : 0.92;
+  const r = rng(`${site.id}:meta`);
+  const daily = eachDay(current).map((date) => {
+    const spend = Math.round(5000 + r() * 4000);
+    const clicks = Math.round(spend / (60 + r() * 30));
+    return { date, spend, clicks, conversions: Math.round(clicks * (0.01 + r() * 0.02) * 10) / 10 };
+  });
+  const spend = sumBy(daily, (x) => x.spend);
+  const clicks = sumBy(daily, (x) => x.clicks);
+  const conv = sumBy(daily, (x) => x.conversions);
+  const impressions = clicks * 110;
+  const reach = Math.round(impressions / 2.6);
+  const k = (cur: number, mul: number) => ({ current: cur, previous: Math.round(cur * mul * prevFactor) });
+  const campaigns: [string, string, number, number, number][] = [
+    ["リード獲得_カタログ請求", "OUTCOME_LEADS", 0.45, 1.6, 2.1],
+    ["トラフィック_RIKシェア記事", "OUTCOME_TRAFFIC", 0.3, 0.4, 2.4],
+    ["リターゲティング_サイト訪問者", "OUTCOME_LEADS", 0.15, 1.4, 4.2],
+    ["認知_新製品動画", "OUTCOME_AWARENESS", 0.1, 0, 1.8],
+  ];
+  return {
+    accounts: site.metaAdAccountIds ?? [],
+    conversionActions: ["lead"],
+    totals: {
+      spend: k(spend, 0.95),
+      impressions: k(impressions, 0.9),
+      reach: k(reach, 0.97),
+      clicks: k(clicks, 0.93),
+      conversions: { current: conv, previous: Math.round(conv * 0.85 * prevFactor * 10) / 10 },
+      conversionsValue: { current: 0, previous: 0 },
+    },
+    daily,
+    campaigns: campaigns.map(([name, objective, share, cvMul, freq], i) => {
+      const impr = Math.round(impressions * share);
+      return {
+        accountId: site.metaAdAccountIds?.[0] ?? "",
+        id: String(2000 + i),
+        name,
+        objective,
+        spend: Math.round(spend * share),
+        impressions: impr,
+        reach: Math.round(impr / freq),
+        clicks: Math.round(clicks * share * (objective === "OUTCOME_AWARENESS" ? 0.3 : 1.1)),
+        conversions: Math.round(conv * share * cvMul * 10) / 10,
+        conversionsValue: 0,
+      };
+    }),
+    platforms: [
+      ["instagram", 0.58, 0.55, 0.5],
+      ["facebook", 0.34, 0.38, 0.45],
+      ["audience_network", 0.06, 0.05, 0.02],
+      ["messenger", 0.02, 0.02, 0.03],
+    ].map(([platform, s, c, cv]) => ({
+      platform: platform as string,
+      spend: Math.round(spend * (s as number)),
+      impressions: Math.round(impressions * (s as number)),
+      clicks: Math.round(clicks * (c as number)),
+      conversions: Math.round(conv * (cv as number) * 10) / 10,
+    })),
+    ads: [
+      ["カタログ請求_施工例カルーセル", "リード獲得_カタログ請求", 0.22, 0.012, 2.0],
+      ["カタログ請求_静止画A", "リード獲得_カタログ請求", 0.15, 0.009, 1.2],
+      ["記事_ウッドデッキDIY", "トラフィック_RIKシェア記事", 0.14, 0.016, 0.3],
+      ["リタゲ_人工木デッキ", "リターゲティング_サイト訪問者", 0.1, 0.007, 1.4],
+      ["カタログ請求_動画15秒", "リード獲得_カタログ請求", 0.08, 0.004, 0],
+    ].map(([name, campaign, share, ctr, cvMul]) => {
+      const impr = Math.round(impressions * (share as number));
+      return {
+        name: name as string,
+        campaign: campaign as string,
+        spend: Math.round(spend * (share as number)),
+        impressions: impr,
+        reach: Math.round(impr / 2.2),
+        clicks: Math.round(impr * (ctr as number)),
+        conversions: Math.round(conv * (share as number) * (cvMul as number) * 10) / 10,
+      };
+    }),
+  };
+}
+
 export function demoAdvice(site: SiteConfig, range: RangeKey, compare: CompareKey): Advice {
   const hasAds = !!site.adsCustomerIds?.length;
+  const hasMeta = !!site.metaAdAccountIds?.length;
   return {
     siteId: site.id,
     generatedAt: new Date().toISOString(),
@@ -216,6 +297,20 @@ export function demoAdvice(site: SiteConfig, range: RangeKey, compare: CompareKe
           actions: [
             { title: "CVのない検索語句を除外", detail: "DIY・相場系の情報収集語句を除外キーワードに追加する。", priority: "high", metric: "CPA" },
             { title: "一般キーワードの予算を再配分", detail: "除外で浮いた費用を、CVのある語句の入札・予算に回す。", priority: "medium", metric: "検索インプレッションシェア" },
+          ],
+        }
+      : null,
+    meta: hasMeta
+      ? {
+          review: "（サンプル）CVは比較期間より増え、CPAも改善しています。リード獲得キャンペーンが成果の大半を占める一方、リターゲティングは同じ人への表示回数が多くなっています。",
+          findings: [
+            { title: "Instagramが費用・CVとも最大", detail: "費用の約6割、CVの約5割がInstagramです。", tone: "info" },
+            { title: "リターゲティングのフリークエンシーが高い", detail: "1人あたり約4回表示されており、広告の見飽きが起きている可能性があります（推測）。", tone: "warning" },
+            { title: "動画広告にCVがない", detail: "「カタログ請求_動画15秒」は費用が掛かっているのにCVがなく、CTRも低めです。", tone: "critical" },
+          ],
+          actions: [
+            { title: "リターゲティングの対象期間と頻度を調整", detail: "対象を直近30日の訪問者に絞り、クリエイティブを2〜3種に増やして入れ替える。", priority: "high", metric: "フリークエンシー・CPA" },
+            { title: "CVのない動画広告を停止し予算を移す", detail: "施工例カルーセルなどCPAの低い広告に予算を寄せる。", priority: "medium", metric: "CPA" },
           ],
         }
       : null,
