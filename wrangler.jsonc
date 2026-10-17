@@ -8,8 +8,8 @@
   // 画面（public/）も含めて全リクエストを Worker 経由にし、Access の JWT を検証する
   "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": true },
 
-  // `npx wrangler kv namespace create CACHE` で作成した ID に置き換える
-  "kv_namespaces": [{ "binding": "CACHE", "id": "REPLACE_WITH_KV_NAMESPACE_ID" }],
+  // Cloudflare の Workers KV「rik-web-analytics-cache」
+  "kv_namespaces": [{ "binding": "CACHE", "id": "9bb438e1b683480ca92d4610842b8639" }],
 
   // 30分ごとにデータを先読み、07:00 JST（22:00 UTC）にAIアドバイスを更新。
   // 先読みの間隔を短くすると KV の書き込み回数が増える（無料枠は1日1,000回）
