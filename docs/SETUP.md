@@ -1,5 +1,7 @@
 # セットアップ手順
 
+ターミナルを使わず、ブラウザだけで進める場合は [SETUP-BROWSER.md](SETUP-BROWSER.md) を参照してください。
+
 認証情報（鍵・トークン・パスワード）は **チャットやリポジトリに貼らず**、最後の手順で `wrangler secret put` で直接 Cloudflare に登録してください。このリポジトリは公開設定なので、IDやトークンを含むファイルはコミットしないでください（`.dev.vars` は除外済み）。
 
 所要時間の目安: 担当者が揃っていれば半日〜1日。Google広告の開発者トークン審査だけは数日かかることがあります。
@@ -54,9 +56,10 @@ npx wrangler kv namespace create CACHE
    - 例: 「Allow」/ Include: Emails ending in `@rikcorp.jp`
    - グループで絞る例: Include: Azure groups = マーケティンググループのオブジェクトID
 5. アプリケーションの「概要」にある **Application Audience (AUD) タグ** を控える
-6. `wrangler.jsonc` の `vars` に記入
+6. Workers & Pages → `rik-web-analytics` → 設定 → 変数とシークレット で、種類「テキスト」の変数を2つ追加
    - `ACCESS_TEAM_DOMAIN`: `<チーム名>.cloudflareaccess.com`
    - `ACCESS_AUD`: 手順5の AUD タグ
+   - `wrangler.jsonc` は `keep_vars: true` なので、デプロイし直してもこの2つは消えません。設定するまでは画面に「Cloudflare Access の設定が未設定です」と出て、データは表示されません
 
 Worker 側でも Access の署名付きトークン（`Cf-Access-Jwt-Assertion`）を検証するので、Access の設定漏れがあってもデータは表示されません。
 

@@ -20,9 +20,11 @@
   "workers_dev": true,
   // "routes": [{ "pattern": "analytics.example.co.jp", "custom_domain": true }],
 
+  // Cloudflare の管理画面で設定した変数（ACCESS_TEAM_DOMAIN / ACCESS_AUD など）をデプロイ時に消さない
+  "keep_vars": true,
+
+  // ACCESS_TEAM_DOMAIN と ACCESS_AUD は管理画面の「変数とシークレット」で設定する（docs/SETUP.md 手順3）
   "vars": {
-    "ACCESS_TEAM_DOMAIN": "",
-    "ACCESS_AUD": "",
     "GOOGLE_ADS_API_VERSION": "v25",
     "META_API_VERSION": "v24.0",
     "CACHE_TTL_SECONDS": "600",

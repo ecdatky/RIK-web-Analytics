@@ -49,7 +49,7 @@ GA4 の集計値は処理に数時間〜1日の遅れがあり、Google広告・
 
 ## セットアップ
 
-[docs/SETUP.md](docs/SETUP.md) を参照してください。
+[docs/SETUP.md](docs/SETUP.md) を参照してください。ターミナルを使わずブラウザだけで進める場合は [docs/SETUP-BROWSER.md](docs/SETUP-BROWSER.md) を参照してください。
 
 ## ローカルで動かす
 
