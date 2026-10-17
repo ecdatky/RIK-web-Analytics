@@ -1,4 +1,4 @@
-import type { Advice, Env, RangeKey, SiteConfig, SiteReport } from "./types";
+import type { Advice, CompareKey, Env, RangeKey, SiteConfig, SiteReport } from "./types";
 import { resolveRanges, todayJst } from "./dates";
 import { fetchGa4 } from "./google/ga4";
 import { fetchAds } from "./google/ads";
@@ -21,14 +21,14 @@ export function loadSites(env: Env): SiteConfig[] {
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** GA4 と広告を並列で取りに行く。片方が失敗してももう片方は表示する */
-export async function buildReport(env: Env, site: SiteConfig, range: RangeKey): Promise<SiteReport> {
-  const { current, previous } = resolveRanges(range);
+export async function buildReport(env: Env, site: SiteConfig, range: RangeKey, compare: CompareKey): Promise<SiteReport> {
+  const { current, previous } = resolveRanges(range, compare);
   const demo = isDemo(env);
-  const report: SiteReport = { siteId: site.id, range, current, previous, fetchedAt: new Date().toISOString(), demo };
+  const report: SiteReport = { siteId: site.id, range, compare, current, previous, fetchedAt: new Date().toISOString(), demo };
 
   if (demo) {
-    if (site.ga4PropertyId) report.ga4 = demoGa4(site, current, previous);
-    if (site.adsCustomerIds?.length) report.ads = demoAds(site, current, previous);
+    if (site.ga4PropertyId) report.ga4 = demoGa4(site, current, previous, compare);
+    if (site.adsCustomerIds?.length) report.ads = demoAds(site, current, previous, compare);
     return report;
   }
 
@@ -49,8 +49,8 @@ export async function buildReport(env: Env, site: SiteConfig, range: RangeKey): 
 
 // ---- キャッシュ ----
 
-const reportKey = (siteId: string, range: RangeKey) => `report:v1:${siteId}:${range}`;
-const adviceKey = (siteId: string) => `advice:v1:${siteId}`;
+const reportKey = (siteId: string, range: RangeKey, compare: CompareKey) => `report:v2:${siteId}:${range}:${compare}`;
+const adviceKey = (siteId: string) => `advice:v2:${siteId}`;
 // KV には長めに残し、鮮度判定は fetchedAt で行う（古いデータでも即表示 → 裏で更新）
 const KV_KEEP_SECONDS = 3 * 86_400;
 
@@ -58,15 +58,15 @@ export function freshnessSeconds(env: Env): number {
   return Number(env.CACHE_TTL_SECONDS || 600);
 }
 
-export async function getCachedReport(env: Env, siteId: string, range: RangeKey): Promise<SiteReport | null> {
-  return env.CACHE.get<SiteReport>(reportKey(siteId, range), "json");
+export async function getCachedReport(env: Env, siteId: string, range: RangeKey, compare: CompareKey): Promise<SiteReport | null> {
+  return env.CACHE.get<SiteReport>(reportKey(siteId, range, compare), "json");
 }
 
-export async function refreshReport(env: Env, site: SiteConfig, range: RangeKey): Promise<SiteReport> {
-  const report = await buildReport(env, site, range);
+export async function refreshReport(env: Env, site: SiteConfig, range: RangeKey, compare: CompareKey): Promise<SiteReport> {
+  const report = await buildReport(env, site, range, compare);
   // 両方エラーの時は、前回の正常データを上書きしない
   const failed = (site.ga4PropertyId ? !report.ga4 : true) && (site.adsCustomerIds?.length ? !report.ads : true);
-  if (!failed) await env.CACHE.put(reportKey(site.id, range), JSON.stringify(report), { expirationTtl: KV_KEEP_SECONDS });
+  if (!failed) await env.CACHE.put(reportKey(site.id, range, compare), JSON.stringify(report), { expirationTtl: KV_KEEP_SECONDS });
   return report;
 }
 
@@ -78,12 +78,17 @@ export async function getAdvice(env: Env, siteId: string): Promise<Advice | null
   return env.CACHE.get<Advice>(adviceKey(siteId), "json");
 }
 
-export async function refreshAdvice(env: Env, site: SiteConfig, range: RangeKey = "28d"): Promise<Advice> {
+export async function refreshAdvice(
+  env: Env,
+  site: SiteConfig,
+  range: RangeKey = "28d",
+  compare: CompareKey = "prev",
+): Promise<Advice> {
   let advice: Advice;
   if (isDemo(env) && !env.ANTHROPIC_API_KEY) {
-    advice = demoAdvice(site);
+    advice = demoAdvice(site, range, compare);
   } else {
-    const report = (await getCachedReport(env, site.id, range)) ?? (await refreshReport(env, site, range));
+    const report = (await getCachedReport(env, site.id, range, compare)) ?? (await refreshReport(env, site, range, compare));
     advice = await generateAdvice(env, site, report);
   }
   await env.CACHE.put(adviceKey(site.id), JSON.stringify(advice), { expirationTtl: 14 * 86_400 });

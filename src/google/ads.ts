@@ -1,4 +1,4 @@
-import type { AdsCampaign, AdsReport, DateRange, Env } from "../types";
+import type { AdsCampaign, AdsKeyword, AdsReport, AdsSearchTerm, DateRange, Env } from "../types";
 import { eachDay } from "../dates";
 import { adsOAuthToken } from "./auth";
 
@@ -6,7 +6,7 @@ import { adsOAuthToken } from "./auth";
 // 変数 GOOGLE_ADS_API_VERSION で上書きできるようにしておく。
 const DEFAULT_VERSION = "v25";
 
-type GaqlRow = Record<string, Record<string, string | number | undefined> | undefined>;
+type GaqlRow = Record<string, Record<string, unknown> | undefined>;
 
 const clean = (id: string) => id.replace(/-/g, "");
 
@@ -36,6 +36,8 @@ async function gaql(env: Env, customerId: string, query: string): Promise<GaqlRo
 
 const n = (v: unknown) => Number(v ?? 0);
 const yen = (micros: unknown) => n(micros) / 1_000_000;
+// インプレッションシェアは対象外のキャンペーン（P-MAX等）だと値が入らない
+const share = (v: unknown) => (v === undefined || v === null || v === "" ? null : Number(v));
 
 function totalsQuery(r: DateRange) {
   return `SELECT metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value
@@ -45,28 +47,49 @@ function totalsQuery(r: DateRange) {
 export async function fetchAds(env: Env, customerIds: string[], current: DateRange, previous: DateRange): Promise<AdsReport> {
   const perAccount = await Promise.all(
     customerIds.map(async (cid) => {
-      const [cur, prev, daily, campaigns] = await Promise.all([
+      const between = `segments.date BETWEEN '${current.startDate}' AND '${current.endDate}'`;
+      const [cur, prev, daily, campaigns, devices, keywords, searchTerms] = await Promise.all([
         gaql(env, cid, totalsQuery(current)),
         gaql(env, cid, totalsQuery(previous)),
-        gaql(
-          env,
-          cid,
-          `SELECT segments.date, metrics.cost_micros, metrics.clicks, metrics.conversions
-           FROM customer WHERE segments.date BETWEEN '${current.startDate}' AND '${current.endDate}'`,
-        ),
+        gaql(env, cid, `SELECT segments.date, metrics.cost_micros, metrics.clicks, metrics.conversions FROM customer WHERE ${between}`),
         gaql(
           env,
           cid,
           `SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type,
-                  metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
+                  metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value,
+                  metrics.search_impression_share, metrics.search_budget_lost_impression_share, metrics.search_rank_lost_impression_share
            FROM campaign
-           WHERE segments.date BETWEEN '${current.startDate}' AND '${current.endDate}'
-             AND campaign.status != 'REMOVED'
+           WHERE ${between} AND campaign.status != 'REMOVED'
            ORDER BY metrics.cost_micros DESC
            LIMIT 20`,
         ),
+        gaql(
+          env,
+          cid,
+          `SELECT segments.device, metrics.cost_micros, metrics.clicks, metrics.conversions FROM customer WHERE ${between}`,
+        ),
+        gaql(
+          env,
+          cid,
+          `SELECT ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, campaign.name,
+                  metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
+           FROM keyword_view
+           WHERE ${between} AND metrics.impressions > 0
+           ORDER BY metrics.cost_micros DESC
+           LIMIT 20`,
+        ),
+        gaql(
+          env,
+          cid,
+          `SELECT search_term_view.search_term, campaign.name,
+                  metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
+           FROM search_term_view
+           WHERE ${between}
+           ORDER BY metrics.cost_micros DESC
+           LIMIT 30`,
+        ),
       ]);
-      return { cid, cur, prev, daily, campaigns };
+      return { cid, cur, prev, daily, campaigns, devices, keywords, searchTerms };
     }),
   );
 
@@ -100,6 +123,54 @@ export async function fetchAds(env: Env, customerIds: string[], current: DateRan
         clicks: n(r.metrics?.clicks),
         cost: yen(r.metrics?.costMicros),
         conversions: n(r.metrics?.conversions),
+        conversionsValue: n(r.metrics?.conversionsValue),
+        searchImpressionShare: share(r.metrics?.searchImpressionShare),
+        searchBudgetLostIs: share(r.metrics?.searchBudgetLostImpressionShare),
+        searchRankLostIs: share(r.metrics?.searchRankLostImpressionShare),
+      })),
+    )
+    .sort((x, y) => y.cost - x.cost)
+    .slice(0, 30);
+
+  const deviceMap = new Map<string, { device: string; cost: number; clicks: number; conversions: number }>();
+  for (const a of perAccount) {
+    for (const r of a.devices) {
+      const device = String(r.segments?.device ?? "UNKNOWN");
+      const d = deviceMap.get(device) ?? { device, cost: 0, clicks: 0, conversions: 0 };
+      d.cost += yen(r.metrics?.costMicros);
+      d.clicks += n(r.metrics?.clicks);
+      d.conversions += n(r.metrics?.conversions);
+      deviceMap.set(device, d);
+    }
+  }
+
+  const keywords: AdsKeyword[] = perAccount
+    .flatMap((a) =>
+      a.keywords.map((r) => {
+        const kw = (r.adGroupCriterion as { keyword?: { text?: string; matchType?: string } } | undefined)?.keyword;
+        return {
+          text: String(kw?.text ?? ""),
+          matchType: String(kw?.matchType ?? ""),
+          campaign: String(r.campaign?.name ?? ""),
+          impressions: n(r.metrics?.impressions),
+          clicks: n(r.metrics?.clicks),
+          cost: yen(r.metrics?.costMicros),
+          conversions: n(r.metrics?.conversions),
+        };
+      }),
+    )
+    .sort((x, y) => y.cost - x.cost)
+    .slice(0, 20);
+
+  const searchTerms: AdsSearchTerm[] = perAccount
+    .flatMap((a) =>
+      a.searchTerms.map((r) => ({
+        term: String(r.searchTermView?.searchTerm ?? ""),
+        campaign: String(r.campaign?.name ?? ""),
+        impressions: n(r.metrics?.impressions),
+        clicks: n(r.metrics?.clicks),
+        cost: yen(r.metrics?.costMicros),
+        conversions: n(r.metrics?.conversions),
       })),
     )
     .sort((x, y) => y.cost - x.cost)
@@ -116,5 +187,8 @@ export async function fetchAds(env: Env, customerIds: string[], current: DateRan
     },
     daily: [...dailyMap.values()],
     campaigns,
+    devices: [...deviceMap.values()].sort((x, y) => y.cost - x.cost),
+    keywords,
+    searchTerms,
   };
 }

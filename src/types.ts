@@ -33,6 +33,8 @@ export interface SiteConfig {
 }
 
 export type RangeKey = "7d" | "28d" | "90d";
+/** prev: 直前の同じ日数 / yoy: 前年同期（同じ日付の1年前） */
+export type CompareKey = "prev" | "yoy";
 
 export interface DateRange {
   startDate: string; // YYYY-MM-DD
@@ -77,6 +79,30 @@ export interface AdsCampaign {
   clicks: number;
   cost: number;
   conversions: number;
+  conversionsValue: number;
+  /** 検索広告のみ。0〜1、取得できない場合は null */
+  searchImpressionShare: number | null;
+  searchBudgetLostIs: number | null;
+  searchRankLostIs: number | null;
+}
+
+export interface AdsKeyword {
+  text: string;
+  matchType: string;
+  campaign: string;
+  impressions: number;
+  clicks: number;
+  cost: number;
+  conversions: number;
+}
+
+export interface AdsSearchTerm {
+  term: string;
+  campaign: string;
+  impressions: number;
+  clicks: number;
+  cost: number;
+  conversions: number;
 }
 
 export interface AdsReport {
@@ -84,11 +110,15 @@ export interface AdsReport {
   totals: AdsKpis;
   daily: { date: string; cost: number; clicks: number; conversions: number }[];
   campaigns: AdsCampaign[];
+  devices: { device: string; cost: number; clicks: number; conversions: number }[];
+  keywords: AdsKeyword[];
+  searchTerms: AdsSearchTerm[];
 }
 
 export interface SiteReport {
   siteId: string;
   range: RangeKey;
+  compare: CompareKey;
   current: DateRange;
   previous: DateRange;
   fetchedAt: string;
@@ -99,12 +129,22 @@ export interface SiteReport {
   adsError?: string;
 }
 
+export interface AdviceSection {
+  /** 総評（2〜3文） */
+  review: string;
+  findings: { title: string; detail: string; tone: "good" | "warning" | "critical" | "info" }[];
+  actions: { title: string; detail: string; priority: "high" | "medium" | "low"; metric: string }[];
+}
+
 export interface Advice {
   siteId: string;
   generatedAt: string;
   model: string;
   demo: boolean;
+  range: RangeKey;
+  compare: CompareKey;
+  /** サイト全体のひとこと */
   summary: string;
-  findings: { title: string; detail: string; tone: "good" | "warning" | "critical" | "info" }[];
-  actions: { title: string; detail: string; priority: "high" | "medium" | "low"; metric: string }[];
+  ga4: AdviceSection | null;
+  ads: AdviceSection | null;
 }

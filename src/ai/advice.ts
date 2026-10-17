@@ -1,12 +1,13 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import * as z from "zod/v4";
-import type { Advice, Env, SiteConfig, SiteReport } from "../types";
+import type { Advice, AdsReport, Env, SiteConfig, SiteReport } from "../types";
+import { COMPARE_LABEL } from "../dates";
 
 const DEFAULT_MODEL = "claude-opus-5-5";
 
-const AdviceSchema = z.object({
-  summary: z.string(),
+const Section = z.object({
+  review: z.string(),
   findings: z.array(
     z.object({
       title: z.string(),
@@ -24,28 +25,62 @@ const AdviceSchema = z.object({
   ),
 });
 
-const SYSTEM = `あなたは株式会社ユニマットリック（エクステリア・ガーデン製品メーカー）のマーケティンググループを支援するWeb解析の専門家です。
-渡されるのは1サイト分のGA4とGoogle広告の集計データ（今期間と前期間の比較）です。
+const AdviceSchema = z.object({
+  summary: z.string(),
+  ga4: Section.nullable(),
+  ads: Section.nullable(),
+});
 
-- データから読み取れる事実だけを根拠にしてください。数値の裏付けがない推測は「推測」と明記します。
-- findings は3〜5件。良い変化・悪い変化・注意点を、根拠となる数値（前期間比など）とともに書きます。
-- actions は2〜4件。マーケティング担当者が来週から着手できる具体的な改善施策を、優先度順に書きます。metric にはその施策で追う指標名を入れます。
-- summary は2文以内で、このサイトの今の状況を一言でまとめます。
-- 文体は簡潔な日本語。誇張表現や前置きは不要です。`;
+const SYSTEM = `あなたは株式会社ユニマットリック（エクステリア・ガーデン製品メーカー）のマーケティンググループを支援するWeb解析と広告運用の専門家です。
+渡されるのは1サイト分のGA4（サイトのアクセス解析）とGoogle広告（広告の成果）の集計データで、今期間と比較期間（前期間または前年同期）の値が入っています。
+
+出力は GA4 と Google広告 を分けて書きます。データが無い方は null にします。
+- review: その領域の総評。2〜3文で、比較期間に対して良くなったか悪くなったか、その主因は何かを書きます。
+- findings: 3〜5件。良い変化・悪い変化・注意点を、根拠の数値（比較期間比など）とともに書きます。
+- actions: 2〜4件。担当者が来週から着手できる具体的な改善施策を優先度順に書きます。metric にはその施策で追う指標名を入れます。
+- summary: サイト全体の状況を1〜2文で。GA4と広告をまたいだ見立て（広告流入がサイト内で成果につながっているか等）があれば入れます。
+
+Google広告では次の観点で効果を判断します。
+- CPA・CVR・ROAS（コンバージョン値がある場合）の変化と、キャンペーン間の差
+- 検索インプレッションシェアと、予算・広告ランクによる損失（取りこぼしの有無と原因）
+- 費用が掛かっているのにコンバージョンが無いキーワード・検索語句（除外候補）
+- デバイス別の費用対効果
+
+データから読み取れる事実だけを根拠にし、数値の裏付けがない推測は「推測」と明記します。文体は簡潔な日本語で、誇張表現や前置きは不要です。`;
 
 function pct(cur: number, prev: number) {
   return prev ? `${(((cur - prev) / prev) * 100).toFixed(1)}%` : "n/a";
 }
 
+const withChange = (o: Record<string, { current: number; previous: number }>) =>
+  Object.fromEntries(Object.entries(o).map(([k, v]) => [k, { ...v, change: pct(v.current, v.previous) }]));
+
+function adsDigest(a: AdsReport) {
+  const t = a.totals;
+  const ratio = (x: number, y: number) => (y ? x / y : null);
+  return {
+    totals: withChange(t as unknown as Record<string, { current: number; previous: number }>),
+    derived: {
+      ctr: { current: ratio(t.clicks.current, t.impressions.current), previous: ratio(t.clicks.previous, t.impressions.previous) },
+      cvr: { current: ratio(t.conversions.current, t.clicks.current), previous: ratio(t.conversions.previous, t.clicks.previous) },
+      cpa: { current: ratio(t.cost.current, t.conversions.current), previous: ratio(t.cost.previous, t.conversions.previous) },
+      roas: { current: ratio(t.conversionsValue.current, t.cost.current), previous: ratio(t.conversionsValue.previous, t.cost.previous) },
+    },
+    campaigns: a.campaigns.slice(0, 15),
+    devices: a.devices,
+    keywords: a.keywords.slice(0, 15),
+    searchTerms: a.searchTerms.slice(0, 20),
+  };
+}
+
 /** AIに渡す要約。生データをそのまま渡さず、比較しやすい形に絞る */
 export function buildDigest(site: SiteConfig, report: SiteReport) {
   const g = report.ga4;
-  const a = report.ads;
   return {
     site: { name: site.name, url: site.url, goal: site.goal },
-    period: { current: report.current, previous: report.previous },
+    period: { current: report.current, comparison: report.previous, comparisonType: COMPARE_LABEL[report.compare] },
     ga4: g && {
-      totals: Object.fromEntries(Object.entries(g.totals).map(([k, v]) => [k, { ...v, change: pct(v.current, v.previous) }])),
+      totals: withChange(g.totals),
       channels: g.channels,
       devices: g.devices,
       topPages: g.topPages.slice(0, 10),
@@ -53,11 +88,7 @@ export function buildDigest(site: SiteConfig, report: SiteReport) {
       sourceMedium: g.sourceMedium,
     },
     ga4Error: report.ga4Error,
-    ads: a && {
-      totals: Object.fromEntries(Object.entries(a.totals).map(([k, v]) => [k, { ...v, change: pct(v.current, v.previous) }])),
-      cpa: a.totals.conversions.current ? a.totals.cost.current / a.totals.conversions.current : null,
-      campaigns: a.campaigns.slice(0, 15),
-    },
+    ads: report.ads && adsDigest(report.ads),
     adsError: report.adsError,
   };
 }
@@ -78,7 +109,7 @@ export async function generateAdvice(env: Env, site: SiteConfig, report: SiteRep
     messages: [
       {
         role: "user",
-        content: `次のデータを分析して、改善アドバイスを出してください。\n\n${JSON.stringify(buildDigest(site, report))}`,
+        content: `次のデータを分析して、GA4とGoogle広告それぞれの総評と改善アドバイスを出してください。\n\n${JSON.stringify(buildDigest(site, report))}`,
       },
     ],
   });
@@ -86,11 +117,17 @@ export async function generateAdvice(env: Env, site: SiteConfig, report: SiteRep
   if (response.stop_reason === "refusal") throw new Error("AIが回答を返しませんでした（refusal）");
   if (!response.parsed_output) throw new Error(`AIの出力を解釈できませんでした（stop_reason: ${response.stop_reason}）`);
 
+  const out = response.parsed_output;
   return {
     siteId: site.id,
     generatedAt: new Date().toISOString(),
     model: response.model,
     demo: false,
-    ...response.parsed_output,
+    range: report.range,
+    compare: report.compare,
+    summary: out.summary,
+    // データが無い側はモデルの出力に関わらず null にする
+    ga4: report.ga4 ? out.ga4 : null,
+    ads: report.ads ? out.ads : null,
   };
 }

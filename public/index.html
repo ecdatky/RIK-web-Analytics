@@ -19,6 +19,10 @@
         <button data-range="28d" role="radio">28日</button>
         <button data-range="90d" role="radio">90日</button>
       </div>
+      <div class="seg" role="radiogroup" aria-label="比較対象">
+        <button data-compare="prev" role="radio">前期間比</button>
+        <button data-compare="yoy" role="radio">前年同期比</button>
+      </div>
       <button id="refresh" class="btn" title="APIから最新データを取り直します">最新に更新</button>
       <span id="user" class="muted small"></span>
     </div>
@@ -31,7 +35,7 @@
   </main>
 
   <footer class="foot muted small">
-    集計期間は昨日までの完了日。前期間は同じ日数の直前期間です。「今日（速報）」は途中値です。
+    集計期間は昨日までの完了日です。前期間は同じ日数の直前期間、前年同期は同じ日付の1年前です。「今日（速報）」は途中値です。
   </footer>
 
   <script src="/app.js" type="module"></script>

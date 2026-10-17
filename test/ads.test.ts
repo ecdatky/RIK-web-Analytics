@@ -23,8 +23,24 @@ describe("fetchAds", () => {
         calls.push({ url, headers: init.headers as Record<string, string>, query });
         if (query.includes("FROM campaign")) {
           return Response.json([
-            { results: [{ campaign: { id: "1", name: "A", status: "ENABLED", advertisingChannelType: "SEARCH" }, metrics: { costMicros: "5000000", clicks: "10", impressions: "100", conversions: 1 } }] },
+            {
+              results: [
+                {
+                  campaign: { id: "1", name: "A", status: "ENABLED", advertisingChannelType: "SEARCH" },
+                  metrics: { costMicros: "5000000", clicks: "10", impressions: "100", conversions: 1, searchImpressionShare: 0.5, searchBudgetLostImpressionShare: 0.3 },
+                },
+              ],
+            },
           ]);
+        }
+        if (query.includes("FROM search_term_view")) {
+          return Response.json([{ results: [{ searchTermView: { searchTerm: "ウッドデッキ" }, campaign: { name: "A" }, metrics: { costMicros: "3000000", clicks: "3" } }] }]);
+        }
+        if (query.includes("FROM keyword_view")) {
+          return Response.json([{ results: [{ adGroupCriterion: { keyword: { text: "フェンス", matchType: "PHRASE" } }, campaign: { name: "A" }, metrics: { costMicros: "1000000" } }] }]);
+        }
+        if (query.includes("segments.device")) {
+          return Response.json([{ results: [{ segments: { device: "MOBILE" }, metrics: { costMicros: "2000000", clicks: "5", conversions: 1 } }] }]);
         }
         if (query.includes("segments.date,")) {
           return Response.json([{ results: [{ segments: { date: "2026-10-16" }, metrics: { costMicros: "1000000", clicks: "2", conversions: 0.5 } }] }]);
@@ -40,6 +56,11 @@ describe("fetchAds", () => {
     expect(r.daily).toHaveLength(7);
     expect(r.daily.at(-1)).toEqual({ date: "2026-10-16", cost: 2, clicks: 4, conversions: 1 });
     expect(r.campaigns).toHaveLength(2);
+    expect(r.campaigns[0].searchImpressionShare).toBe(0.5);
+    expect(r.campaigns[0].searchRankLostIs).toBeNull();
+    expect(r.devices).toEqual([{ device: "MOBILE", cost: 4, clicks: 10, conversions: 2 }]);
+    expect(r.searchTerms[0]).toMatchObject({ term: "ウッドデッキ", cost: 3, conversions: 0 });
+    expect(r.keywords[0]).toMatchObject({ text: "フェンス", matchType: "PHRASE", cost: 1 });
     expect(calls[0].url).toContain("/customers/1234567890/googleAds:searchStream");
     expect(calls[0].headers["login-customer-id"]).toBe("1112223333");
   });

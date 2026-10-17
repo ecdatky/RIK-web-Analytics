@@ -1,6 +1,6 @@
 // 認証情報が揃う前でも画面を確認できるようにするためのデモデータ。
 // 実データと混同しないよう、レスポンスには demo: true を付け、画面にも「デモ」と表示する。
-import type { Advice, AdsReport, DateRange, Ga4Report, SiteConfig } from "./types";
+import type { Advice, AdsReport, CompareKey, DateRange, Ga4Report, RangeKey, SiteConfig } from "./types";
 import { eachDay } from "./dates";
 
 export const DEMO_SITES: SiteConfig[] = [
@@ -33,10 +33,10 @@ function series(seed: string, range: DateRange, base: number) {
 
 const sumBy = <T>(xs: T[], f: (x: T) => number) => xs.reduce((s, x) => s + f(x), 0);
 
-export function demoGa4(site: SiteConfig, current: DateRange, previous: DateRange): Ga4Report {
+export function demoGa4(site: SiteConfig, current: DateRange, previous: DateRange, compare: CompareKey): Ga4Report {
   const base = { corp: 900, product: 600, rikshare: 1500, other: 250 }[site.id] ?? 500;
   const daily = series(`${site.id}:cur`, current, base);
-  const dailyPrevious = series(`${site.id}:prev`, previous, base * 0.92);
+  const dailyPrevious = series(`${site.id}:${compare}`, previous, base * (compare === "yoy" ? 0.78 : 0.92));
   const r = rng(site.id);
   const k = (cur: number, prev: number) => ({ current: cur, previous: prev });
   const sessions = sumBy(daily, (x) => x.sessions);
@@ -106,7 +106,8 @@ export function demoGa4(site: SiteConfig, current: DateRange, previous: DateRang
   };
 }
 
-export function demoAds(site: SiteConfig, current: DateRange, previous: DateRange): AdsReport {
+export function demoAds(site: SiteConfig, current: DateRange, _previous: DateRange, compare: CompareKey): AdsReport {
+  const prevFactor = compare === "yoy" ? 0.75 : 0.9;
   const r = rng(`${site.id}:ads`);
   const daily = eachDay(current).map((date) => {
     const cost = Math.round(8000 + r() * 6000);
@@ -120,10 +121,10 @@ export function demoAds(site: SiteConfig, current: DateRange, previous: DateRang
   return {
     accounts: site.adsCustomerIds ?? [],
     totals: {
-      impressions: { current: clicks * 28, previous: clicks * 26 },
-      clicks: { current: clicks, previous: Math.round(clicks * 0.95) },
-      cost: { current: cost, previous: Math.round(cost * 0.9) },
-      conversions: { current: conv, previous: conv * 1.08 },
+      impressions: { current: clicks * 28, previous: Math.round(clicks * 26 * prevFactor) },
+      clicks: { current: clicks, previous: Math.round(clicks * 0.95 * prevFactor) },
+      cost: { current: cost, previous: Math.round(cost * prevFactor) },
+      conversions: { current: conv, previous: Math.round(conv * 1.08 * prevFactor * 10) / 10 },
       conversionsValue: { current: 0, previous: 0 },
     },
     daily,
@@ -139,26 +140,84 @@ export function demoAds(site: SiteConfig, current: DateRange, previous: DateRang
         clicks: Math.round(clicks * share),
         cost: Math.round(cost * share),
         conversions: Math.round(conv * share * (i === 0 ? 2 : 0.8) * 10) / 10,
+        conversionsValue: 0,
+        searchImpressionShare: i < 2 ? [0.82, 0.41][i] : null,
+        searchBudgetLostIs: i < 2 ? [0.02, 0.37][i] : null,
+        searchRankLostIs: i < 2 ? [0.16, 0.22][i] : null,
       };
     }),
+    devices: [
+      { device: "MOBILE", cost: Math.round(cost * 0.58), clicks: Math.round(clicks * 0.64), conversions: Math.round(conv * 0.48 * 10) / 10 },
+      { device: "DESKTOP", cost: Math.round(cost * 0.37), clicks: Math.round(clicks * 0.31), conversions: Math.round(conv * 0.47 * 10) / 10 },
+      { device: "TABLET", cost: Math.round(cost * 0.05), clicks: Math.round(clicks * 0.05), conversions: Math.round(conv * 0.05 * 10) / 10 },
+    ],
+    keywords: [
+      ["ユニマットリック", "EXACT", "指名検索", 0.08, 3.2],
+      ["エクステリア メーカー", "PHRASE", "一般キーワード_エクステリア", 0.12, 1.1],
+      ["ウッドデッキ 人工木", "BROAD", "一般キーワード_エクステリア", 0.1, 0.6],
+      ["フェンス 目隠し", "PHRASE", "一般キーワード_エクステリア", 0.07, 0.4],
+      ["カーポート おしゃれ", "BROAD", "一般キーワード_エクステリア", 0.06, 0],
+    ].map(([text, matchType, campaign, share, cvMul]) => ({
+      text: text as string,
+      matchType: matchType as string,
+      campaign: campaign as string,
+      impressions: Math.round(clicks * 28 * (share as number)),
+      clicks: Math.round(clicks * (share as number)),
+      cost: Math.round(cost * (share as number)),
+      conversions: Math.round(conv * (share as number) * (cvMul as number) * 10) / 10,
+    })),
+    searchTerms: [
+      ["ユニマットリック カタログ", 0.04, 4],
+      ["ウッドデッキ diy 費用", 0.05, 0],
+      ["目隠しフェンス 高さ", 0.035, 0.5],
+      ["カーポート 価格 相場", 0.03, 0],
+      ["エクステリア 施工例", 0.025, 1],
+    ].map(([term, share, cvMul]) => ({
+      term: term as string,
+      campaign: "一般キーワード_エクステリア",
+      impressions: Math.round(clicks * 25 * (share as number)),
+      clicks: Math.round(clicks * (share as number)),
+      cost: Math.round(cost * (share as number)),
+      conversions: Math.round(conv * (share as number) * (cvMul as number) * 10) / 10,
+    })),
   };
 }
 
-export function demoAdvice(site: SiteConfig): Advice {
+export function demoAdvice(site: SiteConfig, range: RangeKey, compare: CompareKey): Advice {
+  const hasAds = !!site.adsCustomerIds?.length;
   return {
     siteId: site.id,
     generatedAt: new Date().toISOString(),
     model: "demo",
     demo: true,
-    summary: `（デモ表示）${site.name}はセッションが前期間比で増えていますが、コンバージョン率は下がっています。流入の質と導線を確認する時期です。`,
-    findings: [
-      { title: "自然検索からの流入が増加", detail: "Organic Search のセッションが全体の約半分を占め、前期間より伸びています。", tone: "good" },
-      { title: "CVRが低下", detail: "セッション増に対してキーイベント数が追いついていません。", tone: "warning" },
-      { title: "モバイル比率が6割超", detail: "モバイルのエンゲージメント率がデスクトップより低い可能性があります。", tone: "info" },
-    ],
-    actions: [
-      { title: "流入上位の記事に製品導線を追加", detail: "上位ランディングページの本文中と末尾に、関連製品ページへのリンクを設置する。", priority: "high", metric: "キーイベント数" },
-      { title: "一般キーワードキャンペーンの検索語句を見直す", detail: "費用比率が高いのにCVが少ないため、除外キーワードを追加する。", priority: "medium", metric: "CPA" },
-    ],
+    range,
+    compare,
+    summary: `（サンプル）${site.name}はアクセスが伸びていますが、成果につながる割合が下がっています。${hasAds ? "広告は一般キーワードの予算配分の見直しが効きそうです。" : ""}`,
+    ga4: {
+      review: "（サンプル）ユーザー・セッションとも比較期間を上回り、自然検索が増加を牽引しています。一方でキーイベントは横ばいで、CVRが下がっています。",
+      findings: [
+        { title: "自然検索からの流入が増加", detail: "Organic Search のセッションが全体の約半分を占め、比較期間より伸びています。", tone: "good" },
+        { title: "CVRが低下", detail: "セッション増に対してキーイベント数が追いついていません。", tone: "warning" },
+        { title: "モバイル比率が6割超", detail: "モバイルのエンゲージメント率がデスクトップより低い可能性があります（推測）。", tone: "info" },
+      ],
+      actions: [
+        { title: "流入上位の記事に製品導線を追加", detail: "上位ランディングページの本文中と末尾に、関連製品ページへのリンクを設置する。", priority: "high", metric: "キーイベント数" },
+        { title: "モバイルの問い合わせ導線を確認", detail: "スマホ表示でCTAボタンがファーストビューに入っているか確認する。", priority: "medium", metric: "モバイルCVR" },
+      ],
+    },
+    ads: hasAds
+      ? {
+          review: "（サンプル）費用は増えた一方でCVが減り、CPAが悪化しています。主因は一般キーワードキャンペーンで、予算不足による表示機会の損失も大きい状態です。",
+          findings: [
+            { title: "指名検索は効率良好", detail: "指名検索のCPAは全体平均の約半分で、インプレッションシェアも8割を超えています。", tone: "good" },
+            { title: "一般キーワードが予算で表示を逃している", detail: "検索インプレッションシェア41%、予算による損失37%です。", tone: "warning" },
+            { title: "CVのない高額検索語句", detail: "「ウッドデッキ diy 費用」「カーポート 価格 相場」は費用が掛かっているのにCVがありません。", tone: "critical" },
+          ],
+          actions: [
+            { title: "CVのない検索語句を除外", detail: "DIY・相場系の情報収集語句を除外キーワードに追加する。", priority: "high", metric: "CPA" },
+            { title: "一般キーワードの予算を再配分", detail: "除外で浮いた費用を、CVのある語句の入札・予算に回す。", priority: "medium", metric: "検索インプレッションシェア" },
+          ],
+        }
+      : null,
   };
 }
