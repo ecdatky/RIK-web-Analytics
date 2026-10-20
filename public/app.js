@@ -256,41 +256,280 @@ function chartScales(format) {
   };
 }
 
-function lineChart(canvas, labels, datasets, format) {
+const REDUCED = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+const ANIM = REDUCED ? false : { duration: 900, easing: "easeOutQuart" };
+
+/**
+ * 注目点のマーカー。Chart.js が描いた点・棒の位置に、点滅するHTMLの印を重ねる。
+ * options.plugins.highlight.points = [{ index, tone, title, reason }]
+ */
+const highlightPlugin = {
+  id: "highlight",
+  afterDraw(chart, _args, opts) {
+    const points = opts?.points ?? [];
+    const box = chart.canvas.parentElement;
+    let layer = box.querySelector(".hl-layer");
+    if (!points.length) return layer?.remove();
+    if (!layer) {
+      layer = document.createElement("div");
+      layer.className = "hl-layer";
+      layer.innerHTML = points
+        .map((p, i) => `<button type="button" class="hl-dot tone-${p.tone}" data-hl="${i}" aria-label="${esc(p.title)}"><span>${i + 1}</span></button>`)
+        .join("");
+      box.appendChild(layer);
+    }
+    const meta = chart.getDatasetMeta(0);
+    points.forEach((p, i) => {
+      const el = meta.data[p.index];
+      const dot = layer.querySelector(`[data-hl="${i}"]`);
+      if (!el || !dot) return;
+      dot.style.left = `${el.x}px`;
+      dot.style.top = `${Math.min(el.y, chart.chartArea.bottom - 6)}px`;
+    });
+  },
+};
+
+/** 注目点の説明リスト。マーカーや項目にカーソルを当てると、グラフ上の値も表示する */
+function attachHighlightList(chart, points) {
+  const box = chart.canvas.parentElement;
+  box.parentElement.querySelector(`.hl-list[data-for="${chart.canvas.id}"]`)?.remove();
+  if (!points.length) return;
+  box.insertAdjacentHTML(
+    "afterend",
+    `<ol class="hl-list" data-for="${chart.canvas.id}">${points
+      .map((p, i) => `<li class="tone-${p.tone}" data-hl="${i}"><span class="hl-num">${i + 1}</span><span><b>${esc(p.title)}</b><span class="hl-reason">${esc(p.reason)}</span></span></li>`)
+      .join("")}</ol>`,
+  );
+  const show = (i) => {
+    const p = points[i];
+    if (!p) return;
+    chart.setActiveElements([{ datasetIndex: 0, index: p.index }]);
+    chart.tooltip.setActiveElements([{ datasetIndex: 0, index: p.index }], { x: 0, y: 0 });
+    chart.update("none");
+    box.parentElement.querySelectorAll(`[data-hl="${i}"]`).forEach((e) => e.classList.add("on"));
+  };
+  const hide = () => {
+    chart.setActiveElements([]);
+    chart.tooltip.setActiveElements([], { x: 0, y: 0 });
+    chart.update("none");
+    box.parentElement.querySelectorAll("[data-hl].on").forEach((e) => e.classList.remove("on"));
+  };
+  box.parentElement.addEventListener("mouseover", (e) => {
+    const i = e.target.closest("[data-hl]")?.dataset.hl;
+    if (i != null) show(Number(i));
+  });
+  box.parentElement.addEventListener("mouseout", (e) => {
+    if (e.target.closest("[data-hl]")) hide();
+  });
+}
+
+function lineChart(canvas, labels, datasets, format, points = []) {
   const chart = new Chart(canvas, {
     type: "line",
     data: { labels, datasets },
+    plugins: [highlightPlugin],
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      animation: false,
+      animation: ANIM,
       interaction: { mode: "index", intersect: false },
       plugins: {
         legend: { display: false },
         tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${format(c.parsed.y)}` } },
+        highlight: { points },
       },
       elements: { point: { radius: 0, hoverRadius: 4 }, line: { borderWidth: 2, tension: 0.25 } },
       scales: chartScales(format),
     },
   });
   state.charts.push(chart);
+  attachHighlightList(chart, points);
   return chart;
 }
 
-function barChart(canvas, labels, data, label, format) {
+function barChart(canvas, labels, data, label, format, points = []) {
+  const base = cssVar("--series-1");
+  const marked = new Map(points.map((p) => [p.index, p.tone]));
+  const toneColor = { up: cssVar("--good"), down: cssVar("--critical"), info: cssVar("--ads") };
   const chart = new Chart(canvas, {
     type: "bar",
-    data: { labels, datasets: [{ label, data, backgroundColor: cssVar("--series-1"), borderRadius: 4, maxBarThickness: 18 }] },
+    data: {
+      labels,
+      datasets: [{ label, data, backgroundColor: data.map((_, i) => (marked.has(i) ? toneColor[marked.get(i)] || base : base)), borderRadius: 4, maxBarThickness: 18 }],
+    },
+    plugins: [highlightPlugin],
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      animation: false,
-      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => `${label}: ${format(c.parsed.y)}` } } },
+      animation: ANIM && { ...ANIM, delay: (c) => (c.type === "data" ? c.dataIndex * 18 : 0) },
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => `${label}: ${format(c.parsed.y)}` } }, highlight: { points } },
       scales: chartScales(format),
     },
   });
   state.charts.push(chart);
+  attachHighlightList(chart, points);
   return chart;
+}
+
+/** 画面に入ったときに一度だけ実行する（グラフのアニメーションを見える位置で始めるため） */
+function whenVisible(el, fn) {
+  if (!el) return;
+  if (REDUCED || !("IntersectionObserver" in window)) return fn();
+  const io = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((e) => e.isIntersecting)) {
+        io.disconnect();
+        fn();
+      }
+    },
+    { threshold: 0.25 },
+  );
+  io.observe(el);
+}
+
+// ---------- 注目点の判定 ----------
+const WEEKDAY = ["日", "月", "火", "水", "木", "金", "土"];
+const dow = (date) => new Date(`${date}T12:00:00Z`).getUTCDay();
+const dayLabel = (date) => `${md(date)}（${WEEKDAY[dow(date)]}）`;
+const isWeekend = (date) => [0, 6].includes(dow(date));
+const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+
+/** アクセスの日別推移から、最多日・最少日・急増/急減日を最大3つ選ぶ */
+function trendHighlights(dates, values, prevValues, label, format) {
+  const n = values.length;
+  if (n < 5 || Math.max(...values) <= 0) return [];
+  const avg = mean(values);
+  const out = [];
+  const used = new Set();
+  const add = (p) => {
+    if (used.has(p.index) || out.length >= 3) return;
+    used.add(p.index);
+    out.push(p);
+  };
+  const iMax = values.indexOf(Math.max(...values));
+  const iMin = values.indexOf(Math.min(...values));
+
+  // 前日比の最大変化（小さい値どうしのブレは除く）
+  let jump = null;
+  for (let i = 1; i < n; i++) {
+    const a = values[i - 1];
+    const b = values[i];
+    if (Math.max(a, b) < avg * 0.3 || a <= 0) continue;
+    const r = (b - a) / a;
+    if (!jump || Math.abs(r) > Math.abs(jump.r)) jump = { i, r, a, b };
+  }
+
+  const peakRatio = avg ? values[iMax] / avg : 0;
+  if (peakRatio >= 1.25) {
+    add({
+      index: iMax,
+      tone: "up",
+      title: `${dayLabel(dates[iMax])} ${label}が期間中で最多（${format(values[iMax])}）`,
+      reason: `1日平均（${format(avg)}）の${peakRatio.toFixed(1)}倍です。広告の配信強化、メルマガ・SNS投稿、展示会やニュース掲載など、この日に集客のきっかけがあった可能性があります。`,
+    });
+  }
+  if (jump && Math.abs(jump.r) >= 0.4 && jump.i !== iMax && jump.i !== iMin) {
+    const up = jump.r > 0;
+    add({
+      index: jump.i,
+      tone: up ? "up" : "down",
+      title: `${dayLabel(dates[jump.i])} 前日から${up ? "+" : ""}${Math.round(jump.r * 100)}%`,
+      reason: `${format(jump.a)} → ${format(jump.b)} と大きく${up ? "増えて" : "減って"}います。${
+        up ? "集客施策の効果が出た日かもしれません。" : isWeekend(dates[jump.i]) ? "週末に入ったことによる自然な減少と考えられます。" : "平日の急な減少です。広告の停止やページの不具合がなかったか確認をおすすめします。"
+      }`,
+    });
+  }
+  if (avg && values[iMin] <= avg * 0.6) {
+    add({
+      index: iMin,
+      tone: isWeekend(dates[iMin]) ? "info" : "down",
+      title: `${dayLabel(dates[iMin])} ${label}が期間中で最少（${format(values[iMin])}）`,
+      reason: isWeekend(dates[iMin])
+        ? "土日は企業の担当者の閲覧が減るため、下がりやすい日です。"
+        : `平日なのに1日平均の${Math.round((values[iMin] / avg) * 100)}%まで落ちています。祝日・休業日か、計測やサイトの不具合がないか確認してください。`,
+    });
+  }
+  // 比較期間との差が最も大きい日
+  if (out.length < 3 && prevValues?.length === n) {
+    let best = null;
+    for (let i = 0; i < n; i++) {
+      const pv = prevValues[i];
+      if (pv <= 0 || used.has(i)) continue;
+      const r = (values[i] - pv) / pv;
+      if (!best || Math.abs(r) > Math.abs(best.r)) best = { i, r, pv };
+    }
+    if (best && Math.abs(best.r) >= 0.5) {
+      const up = best.r > 0;
+      add({
+        index: best.i,
+        tone: up ? "up" : "down",
+        title: `${dayLabel(dates[best.i])} ${COMPARE_NAME[state.compare]}の同じ日より${up ? "+" : ""}${Math.round(best.r * 100)}%`,
+        reason: `比較期間の同じ位置の日（${format(best.pv)}）と比べて大きく${up ? "上回って" : "下回って"}います。曜日の並びや祝日の違いも影響します。`,
+      });
+    }
+  }
+  return out.sort((a, b) => a.index - b.index);
+}
+
+/** 広告の日別費用から、費用が突出した日・費用をかけたのに成果0の日・成果0が続く期間を選ぶ */
+function costHighlights(dates, cost, conv) {
+  const n = cost.length;
+  if (n < 3 || Math.max(...cost) <= 0) return [];
+  const avg = mean(cost);
+  const out = [];
+  const iMax = cost.indexOf(Math.max(...cost));
+  if (cost[iMax] >= avg * 1.4) {
+    out.push({
+      index: iMax,
+      tone: conv[iMax] > 0 ? "info" : "down",
+      title: `${dayLabel(dates[iMax])} 広告費が最多（${fmtYen(cost[iMax])}）`,
+      reason: `1日平均（${fmtYen(avg)}）の${(cost[iMax] / avg).toFixed(1)}倍です。${
+        conv[iMax] > 0 ? `成果は${fmtDec(conv[iMax])}件ありました。` : "この日の成果は0件でした。入札の自動調整や予算の上振れで、成果につながらない配信が増えていないか確認してください。"
+      }`,
+    });
+  }
+  // 平均以上の費用で成果0の日（最多日と別の、いちばん費用が大きい日）
+  let waste = -1;
+  for (let i = 0; i < n; i++) if (i !== iMax && conv[i] === 0 && cost[i] >= avg * 1.1 && (waste < 0 || cost[i] > cost[waste])) waste = i;
+  if (waste >= 0) {
+    out.push({
+      index: waste,
+      tone: "down",
+      title: `${dayLabel(dates[waste])} ${fmtYen(cost[waste])}使って成果0件`,
+      reason: "平均以上の費用をかけたのに成果がありません。この日の検索語句やクリエイティブを見直す手がかりになります。",
+    });
+  }
+  return out.sort((a, b) => a.index - b.index);
+}
+
+function convHighlights(dates, conv, cost) {
+  const n = conv.length;
+  if (n < 3) return [];
+  const out = [];
+  const total = conv.reduce((a, b) => a + b, 0);
+  if (total > 0) {
+    const iMax = conv.indexOf(Math.max(...conv));
+    if (conv[iMax] >= Math.max(2, mean(conv) * 1.5)) {
+      out.push({
+        index: iMax,
+        tone: "up",
+        title: `${dayLabel(dates[iMax])} 成果が最多（${fmtDec(conv[iMax])}件）`,
+        reason: `この日の1件あたりの費用は${conv[iMax] ? fmtYen(cost[iMax] / conv[iMax]) : "-"}でした。この日に配信していた広告や検索語句は、伸ばす候補になります。`,
+      });
+    }
+  }
+  // 直近で成果0が続いている
+  let streak = 0;
+  for (let i = n - 1; i >= 0 && conv[i] === 0 && cost[i] > 0; i--) streak++;
+  if (streak >= 3) {
+    out.push({
+      index: n - 1,
+      tone: "down",
+      title: `直近${streak}日間 成果0件が続いています`,
+      reason: `この間に${fmtYen(cost.slice(n - streak).reduce((a, b) => a + b, 0))}を使っています。フォームの不具合、計測タグの外れ、配信先の変化がないか早めに確認してください。`,
+    });
+  }
+  return out.sort((a, b) => a.index - b.index);
 }
 
 const md = (date) => `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}`;
@@ -342,6 +581,107 @@ function sourceHeader(kind, extra = "") {
   </header>`;
 }
 
+/** サイトのサムネイル（トップページの画面写真）。取れなければ頭文字で代用する */
+function thumb(site, size) {
+  const initial = esc((site.name || "?").slice(0, 1));
+  if (!site.url) return `<span class="thumb thumb-${size} thumb-empty" aria-hidden="true">${initial}</span>`;
+  const w = size === "lg" ? 480 : 320;
+  const src = `https://s0.wp.com/mshots/v1/${encodeURIComponent(site.url)}?w=${w}&h=${Math.round(w * 0.625)}`;
+  return `<span class="thumb thumb-${size}" aria-hidden="true" data-initial="${initial}"><img src="${src}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentElement.classList.add('thumb-empty');this.parentElement.textContent=this.parentElement.dataset.initial"></span>`;
+}
+
+/** サイト画面の項目へ移動するボタン列 */
+function jumpNav(report) {
+  const items = [
+    ["sec-status", "いまの状況", ""],
+    ["advice", "AIのひとこと", ""],
+    report.ga4 && ["sec-ga4", "アクセス解析", "ga4"],
+    report.ads && ["sec-ads", "Google広告", "ads"],
+    report.meta && ["sec-meta", "SNS広告", "meta"],
+    ["sec-glossary", "用語解説", ""],
+  ].filter(Boolean);
+  return `<nav class="jump-nav" aria-label="このページの項目">${items
+    .map(([id, label, kind]) => `<button type="button" data-jump="${id}" class="${kind ? `jn-${kind}` : ""}">${kind ? '<i aria-hidden="true"></i>' : ""}${label}</button>`)
+    .join("")}</nav>`;
+}
+
+/** スクロール位置に合わせて、いま見ている項目のボタンを強調する */
+function setupJumpNav(view) {
+  state.navObserver?.disconnect();
+  const nav = view.querySelector(".jump-nav");
+  if (!nav || !("IntersectionObserver" in window)) return;
+  const top = ($(".topbar")?.offsetHeight ?? 0);
+  nav.style.top = `${top}px`;
+  const visible = new Map();
+  state.navObserver = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((e) => visible.set(e.target.id, e.isIntersecting));
+      const ids = [...nav.querySelectorAll("[data-jump]")].map((b) => b.dataset.jump);
+      const current = ids.find((id) => visible.get(id));
+      nav.querySelectorAll("[data-jump]").forEach((b) => b.classList.toggle("on", b.dataset.jump === current));
+      const on = nav.querySelector(".on");
+      if (on && nav.scrollWidth > nav.clientWidth) {
+        const left = nav.scrollLeft + on.getBoundingClientRect().left - nav.getBoundingClientRect().left - 16;
+        nav.scrollTo({ left, behavior: REDUCED ? "auto" : "smooth" });
+      }
+    },
+    { rootMargin: `-${top + 60}px 0px -55% 0px` },
+  );
+  nav.querySelectorAll("[data-jump]").forEach((b) => {
+    const el = document.getElementById(b.dataset.jump);
+    if (el) state.navObserver.observe(el);
+  });
+}
+
+/** 数字を0から数え上げる（¥・%・カンマ付きの表示に対応） */
+function countUp(el) {
+  const m = el.textContent.trim().match(/^(¥?)([\d,]+(?:\.\d+)?)(%?)$/);
+  if (!m) return;
+  const [, pre, num, post] = m;
+  const target = Number(num.replace(/,/g, ""));
+  const decimals = (num.split(".")[1] || "").length;
+  const fmt = (v) => `${pre}${v.toLocaleString("ja-JP", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}${post}`;
+  const start = performance.now();
+  const dur = 900;
+  const step = (now) => {
+    const t = Math.min(1, (now - start) / dur);
+    el.textContent = fmt(target * (1 - Math.pow(1 - t, 3)));
+    if (t < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+/** 画面に入った要素を下からふわっと表示し、数字は数え上げる */
+function animateIn(root) {
+  root.classList.remove("view-in");
+  void root.offsetWidth;
+  root.classList.add("view-in");
+  if (REDUCED || !("IntersectionObserver" in window)) return;
+  state.revealObserver?.disconnect();
+  const io = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((e) => {
+        if (!e.isIntersecting) return;
+        io.unobserve(e.target);
+        e.target.classList.add("in");
+        e.target.querySelectorAll(".tile .value").forEach((v) => {
+          if (!v.querySelector("*")) countUp(v);
+        });
+      });
+    },
+    { threshold: 0.12 },
+  );
+  state.revealObserver = io;
+  const targets = root.querySelectorAll(".card, .tiles, .src-head, .hero, .status-card, .jump-nav, .site-head");
+  targets.forEach((el) => {
+    el.classList.add("reveal");
+    // 並んだ要素は少しずつ遅らせる
+    const sibs = [...el.parentElement.children].filter((c) => c.classList.contains("reveal"));
+    el.style.setProperty("--d", `${Math.min(sibs.indexOf(el), 5) * 60}ms`);
+    io.observe(el);
+  });
+}
+
 async function renderSummary() {
   const view = $("#view");
   view.innerHTML = `<div id="sum-cards" class="status-cards"></div><div class="card"><h2>全サイトのサマリー</h2><div id="sum-body" class="table-wrap"><p class="muted">読み込み中…</p></div></div>`;
@@ -363,6 +703,7 @@ async function renderSummary() {
       const l = LEVELS[h.level];
       const point = advice?.headline || (h.bads[0] ? `気になる点：${h.bads[0].text}` : h.goods[0] ? `良くなった点：${h.goods[0].text}` : l.text);
       return `<button class="status-card lv-${h.level}" data-goto="${esc(s.id)}">
+        ${s.url ? thumb(s, "sm") : ""}
         <span class="sc-icon" aria-hidden="true">${l.icon}</span>
         <span class="sc-body"><span class="sc-name">${esc(s.name)}</span><span class="sc-label">${l.label}</span><span class="sc-text">${esc(point)}</span></span>
       </button>`;
@@ -402,13 +743,14 @@ async function renderSummary() {
       <tr><th>サイト</th><th>状況</th><th class="r">ユーザー</th><th class="r">セッション</th><th class="r">キーイベント</th><th class="r">CVR</th><th class="r">広告費</th><th class="r">広告CV</th><th class="r">CPA</th><th class="r">広告費</th><th class="r">広告CV</th><th class="r">CPA</th><th>AIのひとこと</th></tr>
     </thead>
     <tbody>${body}</tbody></table>`;
+  animateIn(view);
 }
 
 function renderGa4(g) {
   const t = g.totals;
   const cvr = ratio(t.keyEvents.current, t.sessions.current);
   const cvrPrev = ratio(t.keyEvents.previous, t.sessions.previous);
-  return `<section class="src src-ga4">
+  return `<section class="src src-ga4" id="sec-ga4">
   ${sourceHeader("ga4")}
   <div class="card advice-box" id="advice-ga4"><p class="muted">AIの総評を読み込み中…</p></div>
   <div class="tiles">
@@ -520,7 +862,7 @@ function renderAds(a) {
   const viaGa4 = a.source === "ga4";
   const cvName = viaGa4 ? "成果（GA4のキーイベント）" : "コンバージョン（CV）";
 
-  return `<section class="src src-ads">
+  return `<section class="src src-ads" id="sec-ads">
   ${sourceHeader("ads", viaGa4 ? "GA4にリンクしたGoogle広告から取得" : `アカウント ${a.accounts.map(esc).join(", ")}`)}
   ${viaGa4 ? `<p class="muted small" style="margin:0">費用・クリック・表示回数はGoogle広告の値、成果はGoogle広告から来た訪問でGA4が計測したキーイベントです。Google広告の管理画面のコンバージョン数とは数え方が異なることがあります。</p>` : ""}
   <div class="card advice-box" id="advice-ads"><p class="muted">AIの総評を読み込み中…</p></div>
@@ -634,7 +976,7 @@ function renderMeta(m) {
   const cvLabel = m.conversionActions.join(", ");
   const multi = m.accounts.length > 1;
 
-  return `<section class="src src-meta">
+  return `<section class="src src-meta" id="sec-meta">
   ${sourceHeader("meta", `アカウント ${m.accounts.map(esc).join(", ")}`)}
   <div class="card advice-box" id="advice-meta"><p class="muted">AIの総評を読み込み中…</p></div>
 
@@ -754,9 +1096,12 @@ function drawTrend(g) {
   }
   const key = state.metric;
   const label = { activeUsers: "ユーザー", sessions: "セッション", keyEvents: "キーイベント" }[key];
+  const dates = g.daily.map((d) => d.date);
+  const values = g.daily.map((d) => d[key]);
+  const prev = g.dailyPrevious.map((d) => d[key]);
   lineChart(
     canvas,
-    g.daily.map((d) => md(d.date)),
+    dates.map(md),
     [
       { label: `${label}（今期間）`, data: g.daily.map((d) => d[key]), borderColor: cssVar("--series-1"), backgroundColor: cssVar("--series-1") },
       {
@@ -768,6 +1113,7 @@ function drawTrend(g) {
       },
     ],
     fmtInt,
+    trendHighlights(dates, values, prev, label, fmtInt),
   );
 }
 
@@ -786,28 +1132,36 @@ async function renderSite(siteId) {
     ].filter(Boolean);
     const noAds = [!site.hasAds && "Google広告", !site.hasMeta && "Meta広告"].filter(Boolean);
     view.innerHTML = `
-      <div class="statusline"><h2 style="margin:0">${esc(site.name)}</h2>${site.url ? `<a class="small" href="${esc(site.url)}" target="_blank" rel="noopener">${esc(site.url)}</a>` : ""}</div>
-      ${statusLine(report, stale)}
+      <div class="site-head">
+        ${thumb(site, "lg")}
+        <div class="site-head-text">
+          <h2>${esc(site.name)}</h2>
+          ${site.url ? `<a class="small" href="${esc(site.url)}" target="_blank" rel="noopener">${esc(site.url)} ↗</a>` : ""}
+          ${statusLine(report, stale)}
+        </div>
+      </div>
+      ${jumpNav(report)}
       ${errors.map((e) => `<div class="alert">${esc(e)}</div>`).join("")}
-      ${healthHero(report)}
+      <div id="sec-status">${healthHero(report)}</div>
       ${site.hasGa4 ? `<div class="tiles today" id="today">${todayTiles(report.ga4)}</div>` : ""}
       <div class="card advice" id="advice"><p class="muted">AIの総評を読み込み中…</p></div>
       ${report.ga4 ? renderGa4(report.ga4) : ""}
       ${report.ads ? renderAds(report.ads) : ""}
       ${report.meta ? renderMeta(report.meta) : ""}
       ${noAds.length ? `<p class="muted small">このサイトには${noAds.join("・")}のアカウントが紐付いていません。</p>` : ""}
-      <div class="card">${glossaryBlock()}</div>`;
-    if (report.ga4) drawTrend(report.ga4);
-    if (report.ads) {
-      const labels = report.ads.daily.map((d) => md(d.date));
-      barChart($("#ads-cost"), labels, report.ads.daily.map((d) => d.cost), "広告費", fmtYen);
-      barChart($("#ads-conv"), labels, report.ads.daily.map((d) => d.conversions), "コンバージョン", fmtDec);
-    }
-    if (report.meta) {
-      const labels = report.meta.daily.map((d) => md(d.date));
-      barChart($("#meta-spend"), labels, report.meta.daily.map((d) => d.spend), "広告費", fmtYen);
-      barChart($("#meta-conv"), labels, report.meta.daily.map((d) => d.conversions), "コンバージョン", fmtDec);
-    }
+      <div class="card" id="sec-glossary">${glossaryBlock()}</div>`;
+    setupJumpNav(view);
+    if (report.ga4) whenVisible($("#trend"), () => drawTrend(report.ga4));
+    const adCharts = (daily, costKey, costId, convId) => {
+      const dates = daily.map((d) => d.date);
+      const cost = daily.map((d) => d[costKey]);
+      const conv = daily.map((d) => d.conversions);
+      whenVisible($(costId), () => barChart($(costId), dates.map(md), cost, "広告費", fmtYen, costHighlights(dates, cost, conv)));
+      whenVisible($(convId), () => barChart($(convId), dates.map(md), conv, "成果", fmtDec, convHighlights(dates, conv, cost)));
+    };
+    if (report.ads) adCharts(report.ads.daily, "cost", "#ads-cost", "#ads-conv");
+    if (report.meta) adCharts(report.meta.daily, "spend", "#meta-spend", "#meta-conv");
+    animateIn(view);
     $("#metric-seg")?.addEventListener("click", (e) => {
       const m = e.target.closest("button")?.dataset.metric;
       if (!m) return;
@@ -881,6 +1235,14 @@ document.addEventListener("click", async (e) => {
     state.tab = go.dataset.goto;
     remember();
     return render();
+  }
+  const jump = e.target.closest("[data-jump]");
+  if (jump) {
+    const el = document.getElementById(jump.dataset.jump);
+    if (!el) return;
+    const offset = ($(".topbar")?.offsetHeight ?? 0) + ($(".jump-nav")?.offsetHeight ?? 0) + 12;
+    window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - offset, behavior: REDUCED ? "auto" : "smooth" });
+    return;
   }
   const r = e.target.closest("[data-range]");
   if (r) {
