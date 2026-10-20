@@ -1,0 +1,35 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "rik-web-analytics",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // 画面（public/）も含めて全リクエストを Worker 経由にし、Access の JWT を検証する
+  "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": true },
+
+  // Cloudflare の Workers KV「rik-web-analytics-cache」
+  "kv_namespaces": [{ "binding": "CACHE", "id": "9bb438e1b683480ca92d4610842b8639" }],
+
+  // 30分ごとにデータを先読み、07:00 JST（22:00 UTC）にAIアドバイスを更新。
+  // 先読みの間隔を短くすると KV の書き込み回数が増える（無料枠は1日1,000回）
+  "triggers": { "crons": ["*/30 * * * *", "0 22 * * *"] },
+
+  // workers.dev のURLで公開し、Cloudflare Access をかける（docs/SETUP.md 参照）。
+  // 自社ドメインで公開する場合は routes を設定して workers_dev を false にする
+  "workers_dev": true,
+  // "routes": [{ "pattern": "analytics.example.co.jp", "custom_domain": true }],
+
+  // Cloudflare の管理画面で設定した変数（ACCESS_TEAM_DOMAIN / ACCESS_AUD など）をデプロイ時に消さない
+  "keep_vars": true,
+
+  // ACCESS_TEAM_DOMAIN と ACCESS_AUD は管理画面の「変数とシークレット」で設定する（docs/SETUP.md 手順3）
+  "vars": {
+    "GOOGLE_ADS_API_VERSION": "v25",
+    "META_API_VERSION": "v24.0",
+    "CACHE_TTL_SECONDS": "600",
+    "DEMO_MODE": "false"
+  },
+
+  "observability": { "enabled": true }
+}
