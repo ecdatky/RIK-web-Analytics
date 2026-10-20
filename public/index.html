@@ -4,13 +4,22 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>RIK Web解析</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Zen+Maru+Gothic:wght@700&display=swap" />
   <link rel="stylesheet" href="/styles.css" />
   <script src="/vendor/chart-4.4.1.umd.js"></script>
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
-      <h1>RIK Web解析ダッシュボード</h1>
+      <span class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V11"/><path d="M10 19V6"/><path d="M16 19v-5"/><path d="M3 21h18"/><path d="M15 8l2-3 3 1"/></svg>
+      </span>
+      <div class="brand-text">
+        <h1>RIK Web解析</h1>
+        <span class="brand-sub">ユニマットリック マーケティング</span>
+      </div>
       <span id="demo-badge" class="badge badge-warn" hidden>デモデータ</span>
     </div>
     <div class="controls">
