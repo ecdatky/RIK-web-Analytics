@@ -31,6 +31,8 @@ export interface SiteConfig {
   url?: string;
   ga4PropertyId?: string;
   adsCustomerIds?: string[];
+  /** Google広告APIを使わず、GA4にリンクされたGoogle広告の費用・クリックをGA4から取る */
+  googleAdsViaGa4?: boolean;
   /** Meta広告アカウントID（act_ は付けても付けなくてもよい） */
   metaAdAccountIds?: string[];
   /** Meta広告でCVとして数える action_type。既定は ["lead"] */
@@ -114,6 +116,8 @@ export interface AdsSearchTerm {
 
 export interface AdsReport {
   accounts: string[];
+  /** ga4: GA4のGoogle広告リンク経由。CVはGA4のキーイベント、インプレッションシェアは無し */
+  source?: "api" | "ga4";
   totals: AdsKpis;
   daily: { date: string; cost: number; clicks: number; conversions: number }[];
   campaigns: AdsCampaign[];
@@ -184,7 +188,12 @@ export interface SiteReport {
   metaError?: string;
 }
 
+/** good: 好調 / steady: 順調 / flat: 横ばい / caution: 注意 / bad: 要対策 */
+export type AdviceStatus = "good" | "steady" | "flat" | "caution" | "bad";
+
 export interface AdviceSection {
+  /** 旧バージョンで作られたアドバイスには無い */
+  status?: AdviceStatus;
   /** 総評（2〜3文） */
   review: string;
   findings: { title: string; detail: string; tone: "good" | "warning" | "critical" | "info" }[];
@@ -198,8 +207,14 @@ export interface Advice {
   demo: boolean;
   range: RangeKey;
   compare: CompareKey;
+  /** 旧バージョンで作られたアドバイスには無い */
+  status?: AdviceStatus;
+  /** ひと目でわかる見出し（1文） */
+  headline?: string;
   /** サイト全体のひとこと */
   summary: string;
+  /** 本文に出てくる専門用語の説明 */
+  glossary?: { term: string; meaning: string }[];
   ga4: AdviceSection | null;
   ads: AdviceSection | null;
   /** 旧バージョンで作られたアドバイスには無い */

@@ -2,6 +2,7 @@ import type { Advice, CompareKey, Env, RangeKey, SiteConfig, SiteReport } from "
 import { resolveRanges, todayJst } from "./dates";
 import { fetchGa4 } from "./google/ga4";
 import { fetchAds } from "./google/ads";
+import { fetchAdsViaGa4 } from "./google/adsViaGa4";
 import { fetchMeta } from "./meta/meta";
 import { generateAdvice } from "./ai/advice";
 import { DEMO_SITES, demoAdvice, demoAds, demoGa4, demoMeta } from "./demo";
@@ -9,6 +10,9 @@ import { DEMO_SITES, demoAdvice, demoAds, demoGa4, demoMeta } from "./demo";
 export function isDemo(env: Env): boolean {
   return env.DEMO_MODE === "true" || !env.SITES_JSON;
 }
+
+/** Google広告を取るかどうか（APIのアカウント指定、またはGA4リンク経由） */
+export const hasGoogleAds = (s: SiteConfig) => !!s.adsCustomerIds?.length || (!!s.googleAdsViaGa4 && !!s.ga4PropertyId);
 
 export function loadSites(env: Env): SiteConfig[] {
   if (isDemo(env) && !env.SITES_JSON) return DEMO_SITES;
@@ -29,7 +33,7 @@ export async function buildReport(env: Env, site: SiteConfig, range: RangeKey, c
 
   if (demo) {
     if (site.ga4PropertyId) report.ga4 = demoGa4(site, current, previous, compare);
-    if (site.adsCustomerIds?.length) report.ads = demoAds(site, current, previous, compare);
+    if (hasGoogleAds(site)) report.ads = demoAds(site, current, previous, compare);
     if (site.metaAdAccountIds?.length) report.meta = demoMeta(site, current, compare);
     return report;
   }
@@ -40,8 +44,11 @@ export async function buildReport(env: Env, site: SiteConfig, range: RangeKey, c
         (g) => (report.ga4 = g),
         (e) => (report.ga4Error = errMsg(e)),
       ),
-    site.adsCustomerIds?.length &&
-      fetchAds(env, site.adsCustomerIds, current, previous).then(
+    hasGoogleAds(site) &&
+      (site.adsCustomerIds?.length
+        ? fetchAds(env, site.adsCustomerIds, current, previous)
+        : fetchAdsViaGa4(env, site.ga4PropertyId!, current, previous)
+      ).then(
         (a) => (report.ads = a),
         (e) => (report.adsError = errMsg(e)),
       ),
@@ -74,7 +81,7 @@ export async function refreshReport(env: Env, site: SiteConfig, range: RangeKey,
   // 全部エラーの時は、前回の正常データを上書きしない
   const failed =
     (site.ga4PropertyId ? !report.ga4 : true) &&
-    (site.adsCustomerIds?.length ? !report.ads : true) &&
+    (hasGoogleAds(site) ? !report.ads : true) &&
     (site.metaAdAccountIds?.length ? !report.meta : true);
   if (!failed) await env.CACHE.put(reportKey(site.id, range, compare), JSON.stringify(report), { expirationTtl: KV_KEEP_SECONDS });
   return report;

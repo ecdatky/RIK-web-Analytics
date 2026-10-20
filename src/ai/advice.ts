@@ -6,7 +6,10 @@ import { COMPARE_LABEL } from "../dates";
 
 const DEFAULT_MODEL = "claude-opus-5-5";
 
+const Status = z.enum(["good", "steady", "flat", "caution", "bad"]);
+
 const Section = z.object({
+  status: Status,
   review: z.string(),
   findings: z.array(
     z.object({
@@ -26,7 +29,10 @@ const Section = z.object({
 });
 
 const AdviceSchema = z.object({
+  status: Status,
+  headline: z.string(),
   summary: z.string(),
+  glossary: z.array(z.object({ term: z.string(), meaning: z.string() })),
   ga4: Section.nullable(),
   ads: Section.nullable(),
   meta: Section.nullable(),
@@ -35,11 +41,23 @@ const AdviceSchema = z.object({
 const SYSTEM = `あなたは株式会社ユニマットリック（エクステリア・ガーデン製品メーカー）のマーケティンググループを支援するWeb解析と広告運用の専門家です。
 渡されるのは1サイト分のGA4（サイトのアクセス解析）、Google広告、Meta広告（Facebook・Instagram）の集計データで、今期間と比較期間（前期間または前年同期）の値が入っています。
 
+読み手はマーケティンググループのメンバーと、Web広告の専門家ではない営業・経営層です。専門用語を知らない人でも、現状が良いのか悪いのか、次に何をすればよいのかが分かるように書きます。
+
 出力は GA4（ga4）、Google広告（ads）、Meta広告（meta）を分けて書きます。データが無いものは null にします。
-- review: その領域の総評。2〜3文で、比較期間に対して良くなったか悪くなったか、その主因は何かを書きます。
-- findings: 3〜5件。良い変化・悪い変化・注意点を、根拠の数値（比較期間比など）とともに書きます。
+- status: 比較期間と比べた状況の判定。good（好調：成果が明確に伸びている）/ steady（順調：おおむね良い方向）/ flat（横ばい）/ caution（注意：悪化の兆しがある）/ bad（要対策：成果が明確に落ちている）から選びます。訪問者数より、問い合わせ・資料請求などの成果（キーイベント・CV）と、その獲得効率を重く見て判定します。件数が少なく増減が偶然の範囲なら flat にします。
+- headline: サイト全体の状況を一文（40字程度まで）で言い切ります。例「アクセスは増えたが、問い合わせは減っている」。
+- summary: サイト全体の状況を2〜3文で。何が良くて何が課題か、まず何をすべきかを書きます。GA4と広告をまたいだ見立て（広告から来た人がサイトで問い合わせまで進んでいるか、Google広告とMeta広告のどちらが効率よく成果を取れているか等）があれば入れます。
+- review: その領域の総評。2〜3文で、比較期間に対して良くなったか悪くなったか、その主な原因を書きます。
+- findings: 3〜5件。良い変化・悪い変化・注意点を、根拠の数値とともに書きます。
 - actions: 2〜4件。担当者が来週から着手できる具体的な改善施策を優先度順に書きます。metric にはその施策で追う指標名を入れます。
-- summary: サイト全体の状況を1〜2文で。GA4と広告をまたいだ見立て（広告流入がサイト内で成果につながっているか、Google広告とMeta広告のどちらが効率よくCVを取れているか等）があれば入れます。
+- glossary: 本文で使った専門用語（CV、CVR、CPA、CTR、セッション、キーイベント、エンゲージメント率、インプレッションシェア、フリークエンシー など）を、使ったものだけ3〜8件、それぞれ一文で説明します。
+
+書き方のルール
+- 一文を短くし、結論を先に書きます。
+- 数値は「1,234人」「56件」「1件あたり8,900円」のように、人数・件数・金額で具体的に書きます。増減は「前期間より12%増（+130人）」のように率と実数を並べます。
+- 英字略語は初出で「CPA（1件の成果を得るのにかかった広告費）」のように括弧で意味を添えます。2回目以降は略語だけで構いません。
+- 「〜と考えられる」「〜の可能性」を重ねず、データで言えることは言い切ります。数値の裏付けがない推測には「推測」と明記します。
+- 誇張表現、前置き、敬語の重ね過ぎは不要です。
 
 Google広告では次の観点で効果を判断します。
 - CPA・CVR・ROAS（コンバージョン値がある場合）の変化と、キャンペーン間の差
@@ -54,7 +72,9 @@ Meta広告では次の観点で効果を判断します。CVは conversionAction
 - 配信面（Facebook / Instagram / Audience Network など）別の費用対効果
 - 費用が掛かっているのにCVの無い広告（停止・差し替え候補）。ただし認知・トラフィック目的のキャンペーンはCV以外の指標でも評価します
 
-データから読み取れる事実だけを根拠にし、数値の裏付けがない推測は「推測」と明記します。文体は簡潔な日本語で、誇張表現や前置きは不要です。`;
+Google広告データの source が "ga4" の場合は、GA4にリンクされたGoogle広告の費用・クリック・表示回数と、Google広告から来たセッションのキーイベント（GA4で計測した成果）です。インプレッションシェアと広告側のコンバージョン値は無いので、それらには触れません。
+
+データから読み取れる事実だけを根拠にします。`;
 
 function pct(cur: number, prev: number) {
   return prev ? `${(((cur - prev) / prev) * 100).toFixed(1)}%` : "n/a";
@@ -67,6 +87,7 @@ function adsDigest(a: AdsReport) {
   const t = a.totals;
   const ratio = (x: number, y: number) => (y ? x / y : null);
   return {
+    source: a.source ?? "api",
     totals: withChange(t as unknown as Record<string, { current: number; previous: number }>),
     derived: {
       ctr: { current: ratio(t.clicks.current, t.impressions.current), previous: ratio(t.clicks.previous, t.impressions.previous) },
@@ -140,7 +161,7 @@ export async function generateAdvice(env: Env, site: SiteConfig, report: SiteRep
     messages: [
       {
         role: "user",
-        content: `次のデータを分析して、GA4・Google広告・Meta広告それぞれの総評と改善アドバイスを出してください。\n\n${JSON.stringify(buildDigest(site, report))}`,
+        content: `次のデータを分析して、GA4・Google広告・Meta広告それぞれの状況判定・総評・改善アドバイスと、用語の説明を出してください。\n\n${JSON.stringify(buildDigest(site, report))}`,
       },
     ],
   });
@@ -156,7 +177,10 @@ export async function generateAdvice(env: Env, site: SiteConfig, report: SiteRep
     demo: false,
     range: report.range,
     compare: report.compare,
+    status: out.status,
+    headline: out.headline,
     summary: out.summary,
+    glossary: out.glossary,
     // データが無い側はモデルの出力に関わらず null にする
     ga4: report.ga4 ? out.ga4 : null,
     ads: report.ads ? out.ads : null,

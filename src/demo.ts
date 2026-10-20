@@ -273,8 +273,17 @@ export function demoAdvice(site: SiteConfig, range: RangeKey, compare: CompareKe
     demo: true,
     range,
     compare,
-    summary: `（サンプル）${site.name}はアクセスが伸びていますが、成果につながる割合が下がっています。${hasAds ? "広告は一般キーワードの予算配分の見直しが効きそうです。" : ""}`,
+    status: "caution",
+    headline: "（サンプル）アクセスは増えたが、問い合わせは伸びていない",
+    summary: `（サンプル）${site.name}はアクセスが伸びていますが、問い合わせなどの成果につながる割合（CVR）が下がっています。${hasAds ? "広告は、成果の出ていない検索語句への出費を止めるのが先決です。" : ""}`,
+    glossary: [
+      { term: "セッション", meaning: "サイトへの訪問1回分。同じ人が2回来れば2セッションと数えます。" },
+      { term: "キーイベント", meaning: "問い合わせ送信や資料請求など、成果として数えている行動です。" },
+      { term: "CVR", meaning: "訪問や広告クリックのうち、成果（CV）につながった割合です。" },
+      { term: "CPA", meaning: "成果1件を得るのにかかった広告費です。低いほど効率が良い状態です。" },
+    ],
     ga4: {
+      status: "caution",
       review: "（サンプル）ユーザー・セッションとも比較期間を上回り、自然検索が増加を牽引しています。一方でキーイベントは横ばいで、CVRが下がっています。",
       findings: [
         { title: "自然検索からの流入が増加", detail: "Organic Search のセッションが全体の約半分を占め、比較期間より伸びています。", tone: "good" },
@@ -288,6 +297,7 @@ export function demoAdvice(site: SiteConfig, range: RangeKey, compare: CompareKe
     },
     ads: hasAds
       ? {
+          status: "bad",
           review: "（サンプル）費用は増えた一方でCVが減り、CPAが悪化しています。主因は一般キーワードキャンペーンで、予算不足による表示機会の損失も大きい状態です。",
           findings: [
             { title: "指名検索は効率良好", detail: "指名検索のCPAは全体平均の約半分で、インプレッションシェアも8割を超えています。", tone: "good" },
@@ -302,6 +312,7 @@ export function demoAdvice(site: SiteConfig, range: RangeKey, compare: CompareKe
       : null,
     meta: hasMeta
       ? {
+          status: "good",
           review: "（サンプル）CVは比較期間より増え、CPAも改善しています。リード獲得キャンペーンが成果の大半を占める一方、リターゲティングは同じ人への表示回数が多くなっています。",
           findings: [
             { title: "Instagramが費用・CVとも最大", detail: "費用の約6割、CVの約5割がInstagramです。", tone: "info" },
