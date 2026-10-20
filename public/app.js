@@ -242,6 +242,11 @@ function destroyCharts() {
   state.charts = [];
 }
 
+if (window.Chart) {
+  Chart.defaults.font.family = getComputedStyle(document.documentElement).getPropertyValue("--font").trim() || "sans-serif";
+  Chart.defaults.font.size = 12;
+}
+
 function chartScales(format) {
   const grid = cssVar("--border");
   const text = cssVar("--text-secondary");
