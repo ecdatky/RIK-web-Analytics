@@ -17,16 +17,24 @@ describe("fetchAdsViaGa4", () => {
       "fetch",
       vi.fn(async (_url: string, init: RequestInit) => {
         const body = JSON.parse(String(init.body));
-        const dim = body.dimensions?.[0]?.name as string | undefined;
+        const dims = (body.dimensions ?? []).map((d: { name: string }) => d.name) as string[];
+        const dim = dims[0];
         const isCost = body.metrics[0].name === "advertiserAdCost";
-        if (!dim) {
+        // 実際の GA4 と同じく、費用系はキャンペーン名なしだと 400 を返す
+        if (isCost && !dims.includes("sessionGoogleAdsCampaignName")) return new Response("incompatible", { status: 400 });
+        if (!isCost && !dim) return Response.json({ rows: [row(["current"], [3]), row(["previous"], [2])] });
+        if (isCost && dims.length === 1) {
+          // 合計（キャンペーン別に返る）。期間で値を変える
+          const prev = body.dateRanges[0].startDate === "2026-10-03";
           return Response.json({
-            rows: isCost
-              ? [row(["current"], [12000, 30, 900]), row(["previous"], [10000, 20, 800])]
-              : [row(["current"], [3]), row(["previous"], [2])],
+            rows: prev ? [row(["指名"], [4000, 5, 300]), row(["一般"], [6000, 15, 500])] : [row(["指名"], [2000, 10, 100]), row(["一般"], [10000, 20, 800])],
           });
         }
-        if (dim === "date") return Response.json({ rows: [isCost ? row(["20261016"], [2000, 5, 100]) : row(["20261016"], [1])] });
+        if (dim === "date") {
+          return Response.json({
+            rows: isCost ? [row(["20261016", "指名"], [500, 2, 40]), row(["20261016", "一般"], [1500, 3, 60])] : [row(["20261016"], [1])],
+          });
+        }
         if (dim === "sessionGoogleAdsCampaignName") {
           return Response.json({
             rows: isCost ? [row(["指名"], [2000, 10, 100]), row(["一般"], [10000, 20, 800])] : [row(["指名"], [2]), row(["(not set)"], [5])],
