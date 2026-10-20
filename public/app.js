@@ -82,8 +82,157 @@ function delta(cur, prev, higherIsBetter = true) {
   return `<span class="delta ${cls}">${arrow} ${(Math.abs(d) * 100).toFixed(1)}% <span class="muted">${label}</span></span>`;
 }
 
+/** 比較期間比の色（good / bad）をタイル全体の縁取りにも使う。説明は用語集から自動で付ける */
 function tile(label, value, deltaHtml = "", hint = "") {
-  return `<div class="tile"${hint ? ` title="${esc(hint)}"` : ""}><div class="label">${esc(label)}</div><div class="value">${value}</div>${deltaHtml}</div>`;
+  const tone = /delta (good|bad)/.exec(deltaHtml)?.[1];
+  const help = hint || termHelp(label);
+  return `<div class="tile${tone ? ` tile-${tone}` : ""}"${help ? ` title="${esc(help)}"` : ""}><div class="label">${esc(label)}${help ? '<span class="help" aria-hidden="true">?</span>' : ""}</div><div class="value">${value}</div>${deltaHtml}</div>`;
+}
+
+// ---------- 用語集 ----------
+const GLOSSARY = [
+  ["ユーザー", "期間中にサイトに来た人の数。同じ人が何回来ても1人と数えます。"],
+  ["新規ユーザー", "期間中に初めてサイトに来た人の数。"],
+  ["セッション", "サイトへの訪問1回分。同じ人が2回来れば2セッションです。"],
+  ["表示回数", "ページや広告が表示された回数。"],
+  ["エンゲージメント率", "10秒以上見る・2ページ以上見る・成果につながる行動をした訪問の割合。高いほどしっかり見られています。"],
+  ["平均セッション時間", "1回の訪問でサイトに滞在した平均時間。"],
+  ["キーイベント", "問い合わせ送信や資料請求など、成果として数えている行動の回数（GA4での呼び名）。"],
+  ["コンバージョン", "広告やサイトで得た成果（問い合わせ・資料請求など）。CVと略します。"],
+  ["CVR", "訪問や広告クリックのうち、成果（CV）につながった割合。高いほど良い状態です。"],
+  ["CPA", "成果1件を得るのにかかった広告費。低いほど効率が良い状態です。"],
+  ["ROAS", "広告費1円あたりに得た成果の金額。高いほど効率が良い状態です。"],
+  ["CTR", "広告が表示された回数のうち、クリックされた割合。広告の反応の良さを表します。"],
+  ["CPC", "広告1クリックあたりの費用。"],
+  ["CPM", "広告を1,000回表示するのにかかった費用。"],
+  ["広告費", "期間中に広告に使った金額。増えること自体は良し悪しではないので色は付けていません。"],
+  ["クリック", "広告がクリックされた回数。"],
+  ["インプレッションシェア", "広告を出せたはずの機会のうち、実際に表示できた割合。"],
+  ["予算による損失", "予算が足りずに広告を出せなかった割合。"],
+  ["広告ランクによる損失", "入札額や広告の質が足りずに出せなかった割合。"],
+  ["リーチ", "広告を見た人の数。"],
+  ["フリークエンシー", "1人あたりに広告が表示された回数。3回を超えると見飽きて効率が落ちやすくなります。"],
+];
+const BY_LENGTH = [...GLOSSARY].sort((a, b) => b[0].length - a[0].length);
+/** ラベルの先頭の用語を優先し、無ければラベル中の用語で引く（長い用語から） */
+function termHelp(label) {
+  const hit = BY_LENGTH.find(([t]) => label.startsWith(t)) ?? BY_LENGTH.find(([t]) => label.includes(t));
+  return hit?.[1] ?? "";
+}
+
+/** extra を渡すとその用語だけ（AIの本文に出てきた用語）、無ければ標準の用語集すべて */
+function glossaryBlock(extra) {
+  const items = extra ? extra.map((g) => [g.term, g.meaning]) : GLOSSARY;
+  return `<details class="glossary"><summary>${extra ? "この文章に出てくる用語" : "用語の説明"}</summary><dl>${items
+    .map(([t, m]) => `<div><dt>${esc(t)}</dt><dd>${esc(m)}</dd></div>`)
+    .join("")}</dl></details>`;
+}
+
+// ---------- 状況の判定（数値から自動判定） ----------
+const LEVELS = {
+  good: { label: "好調", icon: "↑", text: "成果がはっきり伸びています" },
+  steady: { label: "順調", icon: "↗", text: "おおむね良い方向です" },
+  flat: { label: "横ばい", icon: "→", text: "大きな変化はありません" },
+  caution: { label: "注意", icon: "↘", text: "悪化の兆しがあります" },
+  bad: { label: "要対策", icon: "↓", text: "成果が落ちています。手を打つ必要があります" },
+};
+const LEVEL_ORDER = ["bad", "caution", "flat", "steady", "good"];
+
+/**
+ * 各指標の比較期間比を重み付けして合算し、5段階で判定する。
+ * 訪問者数より成果（キーイベント・CV）とその効率を重く見る。件数が少ない指標は重みを下げる。
+ */
+function health(report) {
+  const sig = [];
+  const add = (name, cur, prev, weight, { lowerIsBetter = false, count = false, fmt = fmtInt } = {}) => {
+    if (!prev || cur == null) return;
+    const d = (cur - prev) / prev;
+    const small = count && Math.max(cur, prev) < 10;
+    const w = small ? weight / 3 : weight;
+    let dir = Math.abs(d) < 0.05 ? 0 : d > 0 ? 1 : -1;
+    if (lowerIsBetter) dir = -dir;
+    const diff = cur - prev;
+    const sign = diff > 0 ? "+" : diff < 0 ? "−" : "±";
+    sig.push({
+      name,
+      dir,
+      w,
+      small,
+      text: `${name} ${fmt(cur)}（${COMPARE_NAME[report.compare]}より${Math.abs(d * 100).toFixed(0)}%${d >= 0 ? "増" : "減"}、${sign}${fmt(Math.abs(diff))}）${small ? "※件数が少ないため参考" : ""}`,
+    });
+  };
+  const g = report.ga4?.totals;
+  if (g) {
+    add("サイトに来た人", g.activeUsers.current, g.activeUsers.previous, 1, { count: true });
+    add("成果（問い合わせ・資料請求など）", g.keyEvents.current, g.keyEvents.previous, 3, { count: true });
+    add("訪問が成果につながる割合", ratio(g.keyEvents.current, g.sessions.current), ratio(g.keyEvents.previous, g.sessions.previous), 2, { fmt: fmtPct });
+  }
+  const a = report.ads?.totals;
+  if (a) {
+    add("Google広告からの成果", a.conversions.current, a.conversions.previous, 3, { count: true, fmt: fmtDec });
+    if (a.conversions.current && a.conversions.previous) {
+      add("Google広告の1件あたり費用", ratio(a.cost.current, a.conversions.current), ratio(a.cost.previous, a.conversions.previous), 2, { lowerIsBetter: true, fmt: fmtYen });
+    }
+  }
+  const m = report.meta?.totals;
+  if (m) {
+    if (m.conversions.current || m.conversions.previous) {
+      add("SNS広告からの成果", m.conversions.current, m.conversions.previous, 3, { count: true, fmt: fmtDec });
+      if (m.conversions.current && m.conversions.previous) {
+        add("SNS広告の1件あたり費用", ratio(m.spend.current, m.conversions.current), ratio(m.spend.previous, m.conversions.previous), 2, { lowerIsBetter: true, fmt: fmtYen });
+      }
+    } else {
+      // CVを計測していない（投稿の宣伝など）場合はクリックの量と単価で見る
+      add("SNS広告のクリック", m.clicks.current, m.clicks.previous, 1, { count: true });
+      add("SNS広告のクリック単価", ratio(m.spend.current, m.clicks.current), ratio(m.spend.previous, m.clicks.previous), 1, { lowerIsBetter: true, fmt: fmtYen });
+    }
+  }
+  const total = sig.reduce((s, x) => s + x.w, 0);
+  if (!total) return null;
+  const score = sig.reduce((s, x) => s + x.dir * x.w, 0) / total;
+  const level = score >= 0.5 ? "good" : score >= 0.15 ? "steady" : score > -0.15 ? "flat" : score > -0.5 ? "caution" : "bad";
+  const byWeight = (x, y) => y.w - x.w;
+  return {
+    level,
+    score,
+    goods: sig.filter((x) => x.dir > 0).sort(byWeight),
+    bads: sig.filter((x) => x.dir < 0).sort(byWeight),
+    flats: sig.filter((x) => x.dir === 0).sort(byWeight),
+  };
+}
+
+function levelBadge(level, prefix = "") {
+  const l = LEVELS[level];
+  return l ? `<span class="lv lv-${level}"><i>${l.icon}</i>${prefix}${l.label}</span>` : "";
+}
+
+/** 5段階のメーター。今の位置を強調する */
+function meter(level) {
+  return `<div class="meter" role="img" aria-label="判定 ${LEVELS[level].label}">${LEVEL_ORDER.map(
+    (k) => `<span class="seg-${k}${k === level ? " on" : ""}">${LEVELS[k].label}</span>`,
+  ).join("")}</div>`;
+}
+
+function healthHero(report) {
+  const h = health(report);
+  if (!h) return "";
+  const l = LEVELS[h.level];
+  const list = (items, cls) => items.slice(0, 3).map((x) => `<li class="${cls}">${esc(x.text)}</li>`).join("");
+  return `<section class="hero lv-${h.level}">
+    <div class="hero-main">
+      <div class="hero-icon" aria-hidden="true">${l.icon}</div>
+      <div>
+        <div class="hero-label">いまの状況：<strong>${l.label}</strong></div>
+        <div class="hero-text" id="hero-headline">${esc(l.text)}</div>
+        <div class="muted small">${RANGE_LABEL[report.range]}間を${COMPARE_NAME[report.compare]}と比べて、成果（問い合わせ・資料請求など）を重く見て自動判定しています。</div>
+      </div>
+    </div>
+    ${meter(h.level)}
+    <div class="hero-points">
+      <div><h3>良くなった点</h3><ul>${list(h.goods, "up") || '<li class="none">特になし</li>'}</ul></div>
+      <div><h3>気になる点</h3><ul>${list(h.bads, "down") || '<li class="none">特になし</li>'}</ul></div>
+    </div>
+  </section>`;
 }
 
 const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -190,7 +339,7 @@ function sourceHeader(kind, extra = "") {
 
 async function renderSummary() {
   const view = $("#view");
-  view.innerHTML = `<div class="card"><h2>全サイトのサマリー</h2><div id="sum-body" class="table-wrap"><p class="muted">読み込み中…</p></div></div>`;
+  view.innerHTML = `<div id="sum-cards" class="status-cards"></div><div class="card"><h2>全サイトのサマリー</h2><div id="sum-body" class="table-wrap"><p class="muted">読み込み中…</p></div></div>`;
   const rows = await Promise.all(
     state.sites.map(async (s) => {
       try {
@@ -202,9 +351,22 @@ async function renderSummary() {
     }),
   );
   if (state.tab !== "summary") return;
+  $("#sum-cards").innerHTML = rows
+    .map(({ s, report, advice, error }) => {
+      const h = !error && health(report);
+      if (!h) return "";
+      const l = LEVELS[h.level];
+      const point = advice?.headline || (h.bads[0] ? `気になる点：${h.bads[0].text}` : h.goods[0] ? `良くなった点：${h.goods[0].text}` : l.text);
+      return `<button class="status-card lv-${h.level}" data-goto="${esc(s.id)}">
+        <span class="sc-icon" aria-hidden="true">${l.icon}</span>
+        <span class="sc-body"><span class="sc-name">${esc(s.name)}</span><span class="sc-label">${l.label}</span><span class="sc-text">${esc(point)}</span></span>
+      </button>`;
+    })
+    .join("");
   const body = rows
     .map(({ s, report, advice, error }) => {
       if (error) return `<tr><td>${esc(s.name)}</td><td colspan="12" class="muted">${esc(error)}</td></tr>`;
+      const h = health(report);
       const g = report.ga4?.totals;
       const a = report.ads?.totals;
       const m = report.meta?.totals;
@@ -214,6 +376,7 @@ async function renderSummary() {
       const mCpaPrev = m ? ratio(m.spend.previous, m.conversions.previous) : 0;
       return `<tr>
         <td><button class="btn" data-goto="${esc(s.id)}">${esc(s.name)}</button></td>
+        <td>${h ? levelBadge(h.level) : "-"}</td>
         <td class="r ga4-col">${g ? fmtInt(g.activeUsers.current) : "-"}<br>${g ? delta(g.activeUsers.current, g.activeUsers.previous) : ""}</td>
         <td class="r ga4-col">${g ? fmtInt(g.sessions.current) : "-"}</td>
         <td class="r ga4-col">${g ? fmtInt(g.keyEvents.current) : "-"}<br>${g ? delta(g.keyEvents.current, g.keyEvents.previous) : ""}</td>
@@ -224,14 +387,14 @@ async function renderSummary() {
         <td class="r meta-col">${m ? fmtYen(m.spend.current) : "-"}<br>${m ? delta(m.spend.current, m.spend.previous, null) : ""}</td>
         <td class="r meta-col">${m ? fmtDec(m.conversions.current) : "-"}</td>
         <td class="r meta-col">${m && m.conversions.current ? `${fmtYen(mCpa)}<br>${delta(mCpa, mCpaPrev, false)}` : "-"}</td>
-        <td style="white-space:normal;min-width:260px">${advice ? esc(advice.summary) : '<span class="muted">未生成</span>'}</td>
+        <td style="white-space:normal;min-width:260px">${advice ? esc(advice.headline || advice.summary) : '<span class="muted">未生成</span>'}</td>
       </tr>`;
     })
     .join("");
   $("#sum-body").innerHTML = `<table class="summary-table">
     <thead>
-      <tr><th></th><th colspan="4" class="grp ga4-grp">GA4｜サイトのアクセス</th><th colspan="3" class="grp ads-grp">Google広告</th><th colspan="3" class="grp meta-grp">Meta広告</th><th></th></tr>
-      <tr><th>サイト</th><th class="r">ユーザー</th><th class="r">セッション</th><th class="r">キーイベント</th><th class="r">CVR</th><th class="r">広告費</th><th class="r">広告CV</th><th class="r">CPA</th><th class="r">広告費</th><th class="r">広告CV</th><th class="r">CPA</th><th>AIのひとこと</th></tr>
+      <tr><th></th><th></th><th colspan="4" class="grp ga4-grp">GA4｜サイトのアクセス</th><th colspan="3" class="grp ads-grp">Google広告</th><th colspan="3" class="grp meta-grp">Meta広告</th><th></th></tr>
+      <tr><th>サイト</th><th>状況</th><th class="r">ユーザー</th><th class="r">セッション</th><th class="r">キーイベント</th><th class="r">CVR</th><th class="r">広告費</th><th class="r">広告CV</th><th class="r">CPA</th><th class="r">広告費</th><th class="r">広告CV</th><th class="r">CPA</th><th>AIのひとこと</th></tr>
     </thead>
     <tbody>${body}</tbody></table>`;
 }
@@ -349,15 +512,18 @@ function renderAds(a) {
   const isRank = weightedShare(a.campaigns, "searchRankLostIs");
   const avgCpa = t.conversions.current ? cpa : 0;
   const wasteThreshold = avgCpa ? avgCpa * 0.5 : 0;
+  const viaGa4 = a.source === "ga4";
+  const cvName = viaGa4 ? "成果（GA4のキーイベント）" : "コンバージョン（CV）";
 
   return `<section class="src src-ads">
-  ${sourceHeader("ads", `アカウント ${a.accounts.map(esc).join(", ")}`)}
+  ${sourceHeader("ads", viaGa4 ? "GA4にリンクしたGoogle広告から取得" : `アカウント ${a.accounts.map(esc).join(", ")}`)}
+  ${viaGa4 ? `<p class="muted small" style="margin:0">費用・クリック・表示回数はGoogle広告の値、成果はGoogle広告から来た訪問でGA4が計測したキーイベントです。Google広告の管理画面のコンバージョン数とは数え方が異なることがあります。</p>` : ""}
   <div class="card advice-box" id="advice-ads"><p class="muted">AIの総評を読み込み中…</p></div>
 
   <h3 class="sub">費用と成果</h3>
   <div class="tiles">
     ${tile("広告費", fmtYen(t.cost.current), delta(t.cost.current, t.cost.previous, null))}
-    ${tile("コンバージョン（CV）", fmtDec(t.conversions.current), delta(t.conversions.current, t.conversions.previous))}
+    ${tile(cvName, fmtDec(t.conversions.current), delta(t.conversions.current, t.conversions.previous))}
     ${tile("CPA（1件あたりの獲得単価）", t.conversions.current ? fmtYen(cpa) : "-", t.conversions.current ? delta(cpa, cpaPrev, false) : "", "広告費 ÷ CV。低いほど効率が良い")}
     ${tile("CVR（クリック→CV）", fmtPct(cvr), delta(cvr, cvrPrev), "CV ÷ クリック")}
     ${hasValue ? tile("ROAS（CV値÷広告費）", fmtPct(roas), delta(roas, roasPrev), "広告費1円あたりのコンバージョン値") : ""}
@@ -536,7 +702,7 @@ const TONE_LABEL = { good: "好調", warning: "注意", critical: "要対応", i
 const PRIO_LABEL = { high: "優先度 高", medium: "優先度 中", low: "優先度 低" };
 
 function adviceSection(sec, kindLabel) {
-  return `<h3 class="advice-title">AIによる総評（${kindLabel}）</h3>
+  return `<h3 class="advice-title">AIによる総評（${kindLabel}）${sec.status ? levelBadge(sec.status, "AIの判定：") : ""}</h3>
     <p class="review">${esc(sec.review)}</p>
     <div class="grid grid-2">
       <div><h3>気づき</h3><ul class="findings">${sec.findings
@@ -554,10 +720,16 @@ function renderAdvice(advice, siteId) {
     : "";
   const top = $("#advice");
   if (top) {
-    top.innerHTML = `<div class="chart-head"><h2 style="margin:0">AIのひとこと</h2>
+    top.innerHTML = `<div class="chart-head"><h2 style="margin:0">AIのひとこと ${advice?.status ? levelBadge(advice.status, "AIの判定：") : ""}</h2>
       <div><span class="muted small">${meta}</span>
       <button class="btn" id="advice-gen" data-site="${esc(siteId)}">${advice ? "今の期間で作り直す" : "AIの総評を作る"}</button></div></div>
-      ${advice ? `<p class="summary">${esc(advice.summary)}</p>` : `<p class="muted">まだAIの総評がありません。毎朝7時に自動で作られます。今すぐ作る場合はボタンを押してください（30秒〜1分ほどかかります）。</p>`}`;
+      ${
+        advice
+          ? `${advice.headline ? `<p class="headline">${esc(advice.headline)}</p>` : ""}<p class="summary">${esc(advice.summary)}</p>${
+              advice.glossary?.length ? glossaryBlock(advice.glossary) : ""
+            }`
+          : `<p class="muted">まだAIの総評がありません。毎朝7時に自動で作られます。今すぐ作る場合はボタンを押してください（30秒〜1分ほどかかります）。</p>`
+      }`;
   }
   const ga4 = $("#advice-ga4");
   if (ga4) ga4.innerHTML = advice?.ga4 ? adviceSection(advice.ga4, "GA4") : `<p class="muted small">GA4のAI総評はまだありません。</p>`;
@@ -612,12 +784,14 @@ async function renderSite(siteId) {
       <div class="statusline"><h2 style="margin:0">${esc(site.name)}</h2>${site.url ? `<a class="small" href="${esc(site.url)}" target="_blank" rel="noopener">${esc(site.url)}</a>` : ""}</div>
       ${statusLine(report, stale)}
       ${errors.map((e) => `<div class="alert">${esc(e)}</div>`).join("")}
+      ${healthHero(report)}
       ${site.hasGa4 ? `<div class="tiles today" id="today">${todayTiles(report.ga4)}</div>` : ""}
       <div class="card advice" id="advice"><p class="muted">AIの総評を読み込み中…</p></div>
       ${report.ga4 ? renderGa4(report.ga4) : ""}
       ${report.ads ? renderAds(report.ads) : ""}
       ${report.meta ? renderMeta(report.meta) : ""}
-      ${noAds.length ? `<p class="muted small">このサイトには${noAds.join("・")}のアカウントが紐付いていません。</p>` : ""}`;
+      ${noAds.length ? `<p class="muted small">このサイトには${noAds.join("・")}のアカウントが紐付いていません。</p>` : ""}
+      <div class="card">${glossaryBlock()}</div>`;
     if (report.ga4) drawTrend(report.ga4);
     if (report.ads) {
       const labels = report.ads.daily.map((d) => md(d.date));

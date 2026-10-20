@@ -5,11 +5,11 @@ import { serviceAccountToken } from "./auth";
 const BASE = "https://analyticsdata.googleapis.com/v1beta";
 const SCOPE = "https://www.googleapis.com/auth/analytics.readonly";
 
-interface Row {
+export interface Row {
   dimensionValues?: { value: string }[];
   metricValues?: { value: string }[];
 }
-interface Report {
+export interface Report {
   rows?: Row[];
 }
 
@@ -25,11 +25,11 @@ const TOTAL_METRICS = [
 
 const m = (name: string) => ({ name });
 const d = (name: string) => ({ name });
-const num = (r: Row, i: number) => Number(r.metricValues?.[i]?.value ?? 0);
-const dim = (r: Row, i: number) => r.dimensionValues?.[i]?.value ?? "";
-const ymd = (v: string) => `${v.slice(0, 4)}-${v.slice(4, 6)}-${v.slice(6, 8)}`;
+export const num = (r: Row, i: number) => Number(r.metricValues?.[i]?.value ?? 0);
+export const dim = (r: Row, i: number) => r.dimensionValues?.[i]?.value ?? "";
+export const ymd = (v: string) => `${v.slice(0, 4)}-${v.slice(4, 6)}-${v.slice(6, 8)}`;
 
-async function post<T>(env: Env, path: string, body: unknown): Promise<T> {
+export async function post<T>(env: Env, path: string, body: unknown): Promise<T> {
   const token = await serviceAccountToken(env, SCOPE);
   const res = await fetch(`${BASE}/${path}`, {
     method: "POST",

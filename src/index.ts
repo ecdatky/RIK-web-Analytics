@@ -6,6 +6,7 @@ import {
   adviceIsFromToday,
   getAdvice,
   getCachedReport,
+  hasGoogleAds,
   isDemo,
   isStale,
   loadSites,
@@ -45,7 +46,7 @@ async function handleApi(request: Request, env: Env, ctx: ExecutionContext, url:
           name: s.name,
           url: s.url,
           hasGa4: !!s.ga4PropertyId,
-          hasAds: !!s.adsCustomerIds?.length,
+          hasAds: hasGoogleAds(s),
           hasMeta: !!s.metaAdAccountIds?.length,
         })),
       });
