@@ -138,6 +138,20 @@ const LEVELS = {
 };
 const LEVEL_ORDER = ["bad", "caution", "flat", "steady", "good"];
 
+/** 状況を顔の表情で表す（線は currentColor）。好調ほど笑顔、要対策ほど困り顔 */
+const FACE_PARTS = {
+  good: '<path d="M7.5 10.2q1.5-2 3 0M13.5 10.2q1.5-2 3 0"/><path d="M7 14q5 5.5 10 0z" fill="currentColor"/>',
+  steady: '<circle cx="9" cy="10" r="1.2" fill="currentColor" stroke="none"/><circle cx="15" cy="10" r="1.2" fill="currentColor" stroke="none"/><path d="M8 14.5q4 3.5 8 0"/>',
+  flat: '<circle cx="9" cy="10" r="1.2" fill="currentColor" stroke="none"/><circle cx="15" cy="10" r="1.2" fill="currentColor" stroke="none"/><path d="M8.5 15.5h7"/>',
+  caution: '<path d="M7.5 8.2l3 .8M16.5 8.2l-3 .8"/><circle cx="9" cy="11" r="1.1" fill="currentColor" stroke="none"/><circle cx="15" cy="11" r="1.1" fill="currentColor" stroke="none"/><path d="M8.5 16q1.75-1.5 3.5 0t3.5 0"/><path class="sweat" d="M18.6 5.2q1.4 2 0 2.8q-1.4-.8 0-2.8z" fill="currentColor" stroke="none"/>',
+  bad: '<path d="M7.5 9l3-1.2M16.5 9l-3-1.2"/><circle cx="9" cy="11.2" r="1.1" fill="currentColor" stroke="none"/><circle cx="15" cy="11.2" r="1.1" fill="currentColor" stroke="none"/><path d="M8 17q4-3.8 8 0"/>',
+};
+function face(level, cls = "") {
+  const parts = FACE_PARTS[level];
+  if (!parts) return "";
+  return `<svg class="face face-${level} ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><g class="face-eyes">${parts}</g></svg>`;
+}
+
 /**
  * 各指標の比較期間比を重み付けして合算し、5段階で判定する。
  * 訪問者数より成果（キーイベント・CV）とその効率を重く見る。件数が少ない指標は重みを下げる。
@@ -203,13 +217,13 @@ function health(report) {
 
 function levelBadge(level, prefix = "") {
   const l = LEVELS[level];
-  return l ? `<span class="lv lv-${level}"><i>${l.icon}</i>${prefix}${l.label}</span>` : "";
+  return l ? `<span class="lv lv-${level}"><i>${face(level)}</i>${prefix}${l.label}</span>` : "";
 }
 
 /** 5段階のメーター。今の位置を強調する */
 function meter(level) {
   return `<div class="meter" role="img" aria-label="判定 ${LEVELS[level].label}">${LEVEL_ORDER.map(
-    (k) => `<span class="seg-${k}${k === level ? " on" : ""}">${LEVELS[k].label}</span>`,
+    (k) => `<span class="seg-${k}${k === level ? " on" : ""}">${face(k)}${LEVELS[k].label}</span>`,
   ).join("")}</div>`;
 }
 
@@ -220,7 +234,7 @@ function healthHero(report) {
   const list = (items, cls) => items.slice(0, 3).map((x) => `<li class="${cls}">${esc(x.text)}</li>`).join("");
   return `<section class="hero lv-${h.level}">
     <div class="hero-main">
-      <div class="hero-icon" aria-hidden="true">${l.icon}</div>
+      <div class="hero-icon" aria-hidden="true">${face(h.level, "face-live")}</div>
       <div>
         <div class="hero-label">いまの状況：<strong>${l.label}</strong></div>
         <div class="hero-text" id="hero-headline">${esc(l.text)}</div>
@@ -704,7 +718,7 @@ async function renderSummary() {
       const point = advice?.headline || (h.bads[0] ? `気になる点：${h.bads[0].text}` : h.goods[0] ? `良くなった点：${h.goods[0].text}` : l.text);
       return `<button class="status-card lv-${h.level}" data-goto="${esc(s.id)}">
         ${s.url ? thumb(s, "sm") : ""}
-        <span class="sc-icon" aria-hidden="true">${l.icon}</span>
+        <span class="sc-icon" aria-hidden="true">${face(h.level, "face-live")}</span>
         <span class="sc-body"><span class="sc-name">${esc(s.name)}</span><span class="sc-label">${l.label}</span><span class="sc-text">${esc(point)}</span></span>
       </button>`;
     })
