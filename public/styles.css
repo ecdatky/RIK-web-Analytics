@@ -1,12 +1,12 @@
 /*
  * RIK Web解析ダッシュボード
- * 和文: Zen Kaku Gothic New / 欧文・数字: Manrope（Google Fonts）
+ * 和文: M PLUS 2 / 欧文・数字: Manrope（Google Fonts）
  * 庭と緑の会社らしい落ち着いたグリーンを基調に、余白と影で情報を区切る。
  */
 :root {
   color-scheme: light;
-  --font: "Manrope", "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
-  --font-head: "Zen Maru Gothic", "Zen Kaku Gothic New", "Hiragino Sans", sans-serif;
+  --font: "Manrope", "M PLUS 2", "Hiragino Sans", "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+  --font-head: "Manrope", "M PLUS 2", "Hiragino Sans", "Yu Gothic UI", sans-serif;
 
   --bg: #f2f5f3;
   --surface-1: #ffffff;
@@ -137,7 +137,7 @@ body {
   font-feature-settings: "palt";
   -webkit-font-smoothing: antialiased;
 }
-h1, h2, h3 { font-family: var(--font-head); letter-spacing: 0.02em; }
+h1, h2, h3 { font-family: var(--font-head); letter-spacing: 0.01em; }
 h1 { font-size: 17px; margin: 0; font-weight: 700; line-height: 1.3; }
 h2 { font-size: 16px; margin: 0 0 12px; font-weight: 700; }
 h3 { font-size: 13px; margin: 0 0 10px; font-weight: 700; color: var(--text-secondary); }
@@ -308,7 +308,6 @@ tbody tr:hover { background: var(--surface-2); }
   font-weight: 800; font-size: 12px; padding: 5px 12px; border-radius: 999px; white-space: nowrap;
 }
 .src-chip::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--src); }
-.src .tile::after { content: ""; position: absolute; left: 16px; right: 16px; top: 0; height: 3px; border-radius: 0 0 3px 3px; background: var(--src); opacity: 0.85; }
 .src .advice-box { background: var(--src-bg); box-shadow: none; }
 .advice-title { color: var(--src); font-size: 15px; margin-bottom: 6px; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .review { margin: 0 0 14px; font-size: 14px; }
@@ -328,6 +327,9 @@ h3.sub { margin: 4px 0 -6px; color: var(--text-muted); font-size: 12px; letter-s
 .summary-table td.ads-col { background: color-mix(in srgb, var(--ads-bg) 35%, transparent); }
 .summary-table td.meta-col { background: color-mix(in srgb, var(--meta-bg) 35%, transparent); }
 .summary-table .btn { padding: 5px 12px; }
+.summary-table th, .summary-table td { padding: 9px 8px; }
+.summary-table td .delta .muted { display: none; }
+.summary-table td:last-child { white-space: normal; min-width: 220px; font-size: 12px; line-height: 1.6; }
 
 /* ---------- 状況の判定（好調〜要対策） ---------- */
 .lv-good { --lv: var(--good); --lv-bg: var(--good-bg); }
