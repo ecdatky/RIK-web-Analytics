@@ -40,8 +40,15 @@ describe("fetchMeta", () => {
         if (p.get("level") === "campaign") {
           return Response.json({ data: [{ campaign_id: "1", campaign_name: "C", objective: "OUTCOME_LEADS", spend: "300", impressions: "1000", reach: "400", inline_link_clicks: "12", actions }] });
         }
+        if (p.get("fields") === "creative") {
+          return Response.json(Object.fromEntries(p.get("ids")!.split(",").map((id) => [id, { id, creative: { id: "cr1" } }])));
+        }
+        if (p.get("ids")) {
+          expect(p.get("thumbnail_width")).toBe("600");
+          return Response.json({ cr1: { id: "cr1", thumbnail_url: "https://thumb.example/cr1.jpg" } });
+        }
         if (p.get("level") === "ad") {
-          return Response.json({ data: [{ ad_name: "A", campaign_name: "C", spend: "50", impressions: "200", reach: "100", inline_link_clicks: "3" }] });
+          return Response.json({ data: [{ ad_id: "ad1", ad_name: "A", campaign_name: "C", spend: "50", impressions: "200", reach: "100", inline_link_clicks: "3" }] });
         }
         if (p.get("breakdowns")) {
           return Response.json({ data: [{ publisher_platform: "instagram", spend: "180", impressions: "600", inline_link_clicks: "8", actions }] });
@@ -63,7 +70,7 @@ describe("fetchMeta", () => {
     expect(r.campaigns).toHaveLength(2);
     expect(r.campaigns[0]).toMatchObject({ objective: "OUTCOME_LEADS", reach: 400, conversions: 2 });
     expect(r.platforms).toEqual([{ platform: "instagram", spend: 360, impressions: 1200, clicks: 16, conversions: 4 }]);
-    expect(r.ads[0]).toMatchObject({ name: "A", conversions: 0 });
+    expect(r.ads[0]).toMatchObject({ id: "ad1", name: "A", conversions: 0, imageUrl: "https://thumb.example/cr1.jpg" });
     expect(r.conversionActions).toEqual(["lead"]);
     expect(urls.some((u) => u.pathname === "/v24.0/act_123/insights")).toBe(true);
     expect(urls.some((u) => u.pathname === "/v24.0/act_456/insights")).toBe(true);
@@ -74,6 +81,23 @@ describe("fetchMeta", () => {
     const ranges = urls.map((u) => u.searchParams.get("time_range")).filter(Boolean).map((t) => JSON.parse(t!));
     expect(ranges).toContainEqual({ since: "2026-10-15", until: "2026-10-16" });
     expect(ranges).toContainEqual({ since: "2026-10-13", until: "2026-10-14" });
+  });
+
+  it("広告画像が取れなくても、レポートはそのまま返す", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        const p = new URL(input).searchParams;
+        if (p.get("ids")) return Response.json({ error: { message: "permission" } }, { status: 403 });
+        if (p.get("level") === "ad") return Response.json({ data: [{ ad_id: "ad1", ad_name: "A", campaign_name: "C", spend: "50" }] });
+        return Response.json({ data: [] });
+      }),
+    );
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const env = { META_ACCESS_TOKEN: "tok" } as Env;
+    const r = await fetchMeta(env, ["1"], { startDate: "2026-10-15", endDate: "2026-10-16" }, { startDate: "2026-10-13", endDate: "2026-10-14" });
+    expect(r.ads).toHaveLength(1);
+    expect(r.ads[0].imageUrl).toBeUndefined();
   });
 
   it("APIエラーはアカウントIDとメッセージ付きで投げる", async () => {

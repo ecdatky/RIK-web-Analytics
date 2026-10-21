@@ -151,8 +151,12 @@ export interface MetaCampaign {
 }
 
 export interface MetaAd {
+  /** 旧バージョンのデータには無い */
+  id?: string;
   name: string;
   campaign: string;
+  /** 広告の画像（動画・カルーセルはサムネイル）。取れなかった場合は無い。URLは数日で期限切れになる */
+  imageUrl?: string;
   spend: number;
   impressions: number;
   reach: number;

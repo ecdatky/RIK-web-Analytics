@@ -36,8 +36,9 @@ const fmtDur = (sec) => `${Math.floor(sec / 60)}分${String(Math.round(sec % 60)
 const fmtTime = (iso) =>
   new Date(iso).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 const ratio = (a, b) => (b ? a / b : 0);
-const COMPARE_LABEL = { prev: "前期間比", yoy: "前年同期比" };
-const COMPARE_NAME = { prev: "前期間", yoy: "前年同期" };
+// 社内では「期」が年度を指すため、「前期」「今期」とは書かない
+const COMPARE_LABEL = { prev: "直前比", yoy: "前年比" };
+const COMPARE_NAME = { prev: "直前の同じ日数", yoy: "前年の同じ日付" };
 const RANGE_LABEL = { "7d": "7日", "28d": "28日", "90d": "90日" };
 const DEVICE_LABEL = { mobile: "スマホ", desktop: "PC", tablet: "タブレット", MOBILE: "スマホ", DESKTOP: "PC", TABLET: "タブレット", CONNECTED_TV: "テレビ", OTHER: "その他" };
 const CHANNEL_TYPE_LABEL = {
@@ -627,6 +628,8 @@ function setupJumpNav(view) {
   if (!nav || !("IntersectionObserver" in window)) return;
   const top = ($(".topbar")?.offsetHeight ?? 0);
   nav.style.top = `${top}px`;
+  // 各データの見出し（色帯）は項目ジャンプのすぐ下に貼り付ける
+  view.style.setProperty("--sticky-top", `${top + nav.offsetHeight + 4}px`);
   const visible = new Map();
   state.navObserver = new IntersectionObserver(
     (entries) => {
@@ -721,7 +724,7 @@ async function renderSummary() {
       const todo = diagnosis?.items.filter((i) => i.severity !== "low").length ?? 0;
       if (!h) return "";
       const l = LEVELS[h.level];
-      const point = advice?.headline || (h.bads[0] ? `気になる点：${h.bads[0].text}` : h.goods[0] ? `良くなった点：${h.goods[0].text}` : l.text);
+      const point = (adviceMatchesView(advice) && advice.headline) || (h.bads[0] ? `気になる点：${h.bads[0].text}` : h.goods[0] ? `良くなった点：${h.goods[0].text}` : l.text);
       return `<button class="status-card lv-${h.level}" data-goto="${esc(s.id)}">
         ${s.url ? thumb(s, "sm") : ""}
         <span class="sc-icon" aria-hidden="true">${face(h.level, "face-live")}</span>
@@ -755,7 +758,11 @@ async function renderSummary() {
         <td class="r meta-col">${m ? fmtYen(m.spend.current) : "-"}<br>${m ? delta(m.spend.current, m.spend.previous, null) : ""}</td>
         <td class="r meta-col">${m ? fmtDec(m.conversions.current) : "-"}</td>
         <td class="r meta-col">${m && m.conversions.current ? `${fmtYen(mCpa)}<br>${delta(mCpa, mCpaPrev, false)}` : "-"}</td>
-        <td style="white-space:normal;min-width:260px">${advice ? esc(advice.headline || advice.summary) : '<span class="muted">未生成</span>'}</td>
+        <td style="white-space:normal;min-width:260px">${
+          adviceMatchesView(advice)
+            ? esc(advice.headline || advice.summary)
+            : `<span class="muted">${advice ? "別の期間で作成済み（非表示）" : "未生成"}</span>`
+        }</td>
       </tr>`;
     })
     .join("");
@@ -794,7 +801,7 @@ function renderGa4(g) {
         <button data-metric="sessions" role="radio" aria-checked="${state.metric === "sessions"}">セッション</button>
         <button data-metric="keyEvents" role="radio" aria-checked="${state.metric === "keyEvents"}">キーイベント</button>
       </div>
-      <div class="legend"><span><i style="background:var(--series-1)"></i>今期間</span><span><i style="background:var(--series-prev)"></i>${COMPARE_NAME[state.compare]}</span></div>
+      <div class="legend"><span><i style="background:var(--series-1)"></i>対象期間</span><span><i style="background:var(--series-prev)"></i>${COMPARE_NAME[state.compare]}</span></div>
     </div>
     <div class="chart-box"><canvas id="trend" aria-label="日別推移グラフ"></canvas></div>
   </div>
@@ -1043,28 +1050,59 @@ function renderMeta(m) {
       .join("") || `<tr><td colspan="11" class="muted">データなし</td></tr>`}</tbody>
   </table></div></div>
 
-  <div class="grid grid-2">
-    <div class="card"><h3>配信面別の費用対効果</h3><div class="table-wrap"><table>
-      <thead><tr><th>配信面</th><th class="r">費用</th><th class="r">クリック</th><th class="r">CTR</th><th class="r">CV</th><th class="r">CPA</th></tr></thead>
-      <tbody>${m.platforms
-        .map(
-          (p) => `<tr><td>${esc(PLATFORM_LABEL[p.platform] ?? p.platform)}</td><td class="r">${fmtYen(p.spend)}</td><td class="r">${fmtInt(p.clicks)}</td>
-          <td class="r">${fmtPct(ratio(p.clicks, p.impressions))}</td><td class="r">${fmtDec(p.conversions)}</td><td class="r">${p.conversions ? fmtYen(p.spend / p.conversions) : "-"}</td></tr>`,
-        )
-        .join("") || `<tr><td colspan="6" class="muted">データなし</td></tr>`}</tbody>
-    </table></div></div>
-    <div class="card"><h3>広告（クリエイティブ）別（費用順）</h3><div class="table-wrap"><table>
-      <thead><tr><th>広告</th><th class="r">費用</th><th class="r">CTR</th><th class="r">CV</th><th class="r">CPA</th><th></th></tr></thead>
-      <tbody>${m.ads
-        .map(
-          (x) => `<tr><td class="path" title="${esc(x.name)}">${esc(x.name)}<small>${esc(x.campaign)}</small></td>
-          <td class="r">${fmtYen(x.spend)}</td><td class="r">${fmtPct(ratio(x.clicks, x.impressions))}</td><td class="r">${fmtDec(x.conversions)}</td>
-          <td class="r">${x.conversions ? fmtYen(x.spend / x.conversions) : "-"}</td><td>${judgeMeta(x, avgCpa)}</td></tr>`,
-        )
-        .join("") || `<tr><td colspan="6" class="muted">データなし</td></tr>`}</tbody>
-    </table></div></div>
+  <div class="card"><h3>配信面別の費用対効果</h3><div class="table-wrap"><table>
+    <thead><tr><th>配信面</th><th class="r">費用</th><th class="r">クリック</th><th class="r">CTR</th><th class="r">CV</th><th class="r">CPA</th></tr></thead>
+    <tbody>${m.platforms
+      .map(
+        (p) => `<tr><td>${esc(PLATFORM_LABEL[p.platform] ?? p.platform)}</td><td class="r">${fmtYen(p.spend)}</td><td class="r">${fmtInt(p.clicks)}</td>
+        <td class="r">${fmtPct(ratio(p.clicks, p.impressions))}</td><td class="r">${fmtDec(p.conversions)}</td><td class="r">${p.conversions ? fmtYen(p.spend / p.conversions) : "-"}</td></tr>`,
+      )
+      .join("") || `<tr><td colspan="6" class="muted">データなし</td></tr>`}</tbody>
+  </table></div></div>
+
+  <div class="card"><h3>配信した広告（キャンペーン別・費用順）</h3>
+    <p class="muted small">費用の多い広告から最大20件。画像は動画やカルーセル広告の場合サムネイルです。</p>
+    ${metaAdGallery(m.ads, avgCpa)}
   </div>
   </section>`;
+}
+
+/** 広告をキャンペーンごとにまとめ、画像付きのカードで並べる */
+function metaAdGallery(ads, avgCpa) {
+  if (!ads.length) return `<p class="muted">データなし</p>`;
+  const groups = new Map();
+  for (const ad of ads) {
+    const key = ad.campaign || "（キャンペーン名なし）";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(ad);
+  }
+  return [...groups]
+    .map(
+      ([campaign, list]) => `<div class="adg">
+      <h4 class="adg-campaign"><span>キャンペーン</span>${esc(campaign)}</h4>
+      <div class="adg-grid">${list
+        .map(
+          (x) => `<figure class="adg-card">
+          <div class="adg-img${x.imageUrl ? "" : " adg-noimg"}">${
+            x.imageUrl
+              ? `<img src="${esc(x.imageUrl)}" alt="${esc(x.name)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentElement.classList.add('adg-noimg');this.remove()">`
+              : ""
+          }<span class="adg-fallback">画像なし</span></div>
+          <figcaption>
+            <strong title="${esc(x.name)}">${esc(x.name)}</strong>
+            <dl>
+              <div><dt>費用</dt><dd>${fmtYen(x.spend)}</dd></div>
+              <div><dt>CTR</dt><dd>${fmtPct(ratio(x.clicks, x.impressions))}</dd></div>
+              <div><dt>CV</dt><dd>${fmtDec(x.conversions)}</dd></div>
+              <div><dt>CPA</dt><dd>${x.conversions ? fmtYen(x.spend / x.conversions) : "-"}</dd></div>
+            </dl>
+            <div>${judgeMeta(x, avgCpa)}</div>
+          </figcaption>
+        </figure>`,
+        )
+        .join("")}</div></div>`,
+    )
+    .join("");
 }
 
 const TONE_LABEL = { good: "好調", warning: "注意", critical: "要対応", info: "参考" };
@@ -1083,29 +1121,41 @@ function adviceSection(sec, kindLabel) {
     </div>`;
 }
 
+/** AIのひとことが、いま表示している期間・比較と同じ条件で作られたか。違うものは消さずに隠す */
+const adviceMatchesView = (advice) => !!advice && advice.range === state.range && advice.compare === state.compare;
+const periodLabel = (range, compare) => `${RANGE_LABEL[range] ?? range}・${COMPARE_LABEL[compare] ?? compare}`;
+
 function renderAdvice(advice, siteId) {
-  const meta = advice
-    ? `${fmtTime(advice.generatedAt)} 生成｜${RANGE_LABEL[advice.range] ?? ""}・${COMPARE_LABEL[advice.compare] ?? ""}のデータから${advice.demo ? "（サンプル）" : ""}`
+  const shown = adviceMatchesView(advice) ? advice : null;
+  const hidden = advice && !shown;
+  const meta = shown
+    ? `${fmtTime(shown.generatedAt)} 生成｜${periodLabel(shown.range, shown.compare)}のデータから${shown.demo ? "（サンプル）" : ""}`
     : "";
   const top = $("#advice");
   if (top) {
-    top.innerHTML = `<div class="chart-head"><h2 style="margin:0">AIのひとこと ${advice?.status ? levelBadge(advice.status, "AIの判定：") : ""}</h2>
+    top.innerHTML = `<div class="chart-head"><h2 style="margin:0">AIのひとこと ${shown?.status ? levelBadge(shown.status, "AIの判定：") : ""}</h2>
       <div><span class="muted small">${meta}</span>
       <button class="btn" id="advice-gen" data-site="${esc(siteId)}">${advice ? "今の期間で作り直す" : "AIの総評を作る"}</button></div></div>
       ${
-        advice
-          ? `${advice.headline ? `<p class="headline">${esc(advice.headline)}</p>` : ""}<p class="summary">${esc(advice.summary)}</p>${
-              advice.glossary?.length ? glossaryBlock(advice.glossary) : ""
+        shown
+          ? `${shown.headline ? `<p class="headline">${esc(shown.headline)}</p>` : ""}<p class="summary">${esc(shown.summary)}</p>${
+              shown.glossary?.length ? glossaryBlock(shown.glossary) : ""
             }`
-          : `<p class="muted">まだAIの総評がありません。毎朝7時に自動で作られます。今すぐ作る場合はボタンを押してください（30秒〜1分ほどかかります）。</p>`
+          : hidden
+            ? `<p class="muted">いま表示している期間（${periodLabel(state.range, state.compare)}）とは別の期間（${periodLabel(advice.range, advice.compare)}・${fmtTime(advice.generatedAt)} 作成）のAIのひとことがあるため、非表示にしています。「今の期間で作り直す」を押すと、この期間の内容で表示されます（30秒〜1分ほどかかります）。</p>`
+            : `<p class="muted">まだAIの総評がありません。毎朝7時に自動で作られます。今すぐ作る場合はボタンを押してください（30秒〜1分ほどかかります）。</p>`
       }`;
   }
+  const none = (label) =>
+    hidden
+      ? `<p class="muted small">${label}のAI総評は、表示中とは別の期間で作られたため非表示にしています。上の「今の期間で作り直す」で表示されます。</p>`
+      : `<p class="muted small">${label}のAI総評はまだありません。</p>`;
   const ga4 = $("#advice-ga4");
-  if (ga4) ga4.innerHTML = advice?.ga4 ? adviceSection(advice.ga4, "GA4") : `<p class="muted small">GA4のAI総評はまだありません。</p>`;
+  if (ga4) ga4.innerHTML = shown?.ga4 ? adviceSection(shown.ga4, "GA4") : none("GA4");
   const ads = $("#advice-ads");
-  if (ads) ads.innerHTML = advice?.ads ? adviceSection(advice.ads, "Google広告") : `<p class="muted small">Google広告のAI総評はまだありません。</p>`;
+  if (ads) ads.innerHTML = shown?.ads ? adviceSection(shown.ads, "Google広告") : none("Google広告");
   const metaBox = $("#advice-meta");
-  if (metaBox) metaBox.innerHTML = advice?.meta ? adviceSection(advice.meta, "Meta広告") : `<p class="muted small">Meta広告のAI総評はまだありません。「今の期間で作り直す」で作成できます。</p>`;
+  if (metaBox) metaBox.innerHTML = shown?.meta ? adviceSection(shown.meta, "Meta広告") : none("Meta広告");
 }
 
 // ---------- 診断 ----------
@@ -1154,7 +1204,7 @@ function renderDiagnosis(d, siteId) {
       <div><button class="btn" id="diag-run" data-site="${esc(siteId)}">最新データで再診断</button></div></div>
     <dl class="diag-meta">
       <div><dt>診断日時</dt><dd>${fmtDateTime(d.checkedAt)}</dd></div>
-      <div><dt>対象データ</dt><dd>${fmtDay(d.period.startDate)}〜${fmtDay(d.period.endDate)}（直近28日・前期間と比較）</dd></div>
+      <div><dt>対象データ</dt><dd>${fmtDay(d.period.startDate)}〜${fmtDay(d.period.endDate)}（直近28日・直前の28日と比較）</dd></div>
       <div><dt>データ取得</dt><dd>${fmtTime(d.dataFetchedAt)}</dd></div>
     </dl>
     <div class="diag-summary">${summary}</div>
@@ -1184,7 +1234,7 @@ function drawTrend(g) {
     canvas,
     dates.map(md),
     [
-      { label: `${label}（今期間）`, data: g.daily.map((d) => d[key]), borderColor: cssVar("--series-1"), backgroundColor: cssVar("--series-1") },
+      { label: `${label}（対象期間）`, data: g.daily.map((d) => d[key]), borderColor: cssVar("--series-1"), backgroundColor: cssVar("--series-1") },
       {
         label: `${label}（${COMPARE_NAME[state.compare]}）`,
         data: g.dailyPrevious.map((d) => d[key]),
