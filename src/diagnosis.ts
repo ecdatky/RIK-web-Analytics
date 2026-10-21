@@ -242,6 +242,22 @@ function diagnoseMeta(m: MetaReport, items: DiagnosisItem[], passed: string[]) {
   const t = m.totals;
   const spend = t.spend.current;
   if (spend <= 0) return;
+  // Meta側のCVが2期間とも0なら、ピクセル（データセット）か成果イベントが設定されていない
+  if (t.conversions.current === 0 && t.conversions.previous === 0) {
+    const g = m.ga4;
+    items.push({
+      id: "measure-meta-pixel",
+      area: "measure",
+      severity: "high",
+      title: "Meta広告の成果が、Meta側で1件も計測されていません",
+      evidence: `広告費 ${yen(spend)}・リンククリック ${int(t.clicks.current)}回に対し、Metaの成果（${m.conversionActions.join(", ")}）は0件。${
+        g ? `GA4では、Meta広告から来た訪問 ${int(g.sessions.current)}回のうち ${int(g.keyEvents.current)}件がキーイベントに至っています。` : ""
+      }`,
+      action:
+        "サイトとフォームにMetaピクセル（データセット）を設置し、問い合わせ・資料請求の完了ページで「リード」イベントを送る。設置するまでは、このダッシュボードのGA4側の成果（Meta広告から来た人のキーイベント）で効果を判断する。",
+      where: "Meta ビジネスマネージャ > イベントマネージャ > データソース / Google タグマネージャー",
+    });
+  }
   const cpa = ratio(spend, t.conversions.current);
   const awareness = new Set(["OUTCOME_AWARENESS", "BRAND_AWARENESS", "REACH", "OUTCOME_TRAFFIC", "LINK_CLICKS", "POST_ENGAGEMENT", "OUTCOME_ENGAGEMENT"]);
   const zeros = m.campaigns
