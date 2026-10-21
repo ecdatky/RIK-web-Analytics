@@ -24,6 +24,46 @@ async function appSecretProof(token: string, secret: string): Promise<string> {
   return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+async function graphGet(env: Env, path: string, params: Record<string, string>): Promise<Record<string, unknown>> {
+  const token = env.META_ACCESS_TOKEN;
+  if (!token) throw new Error("META_ACCESS_TOKEN が未設定です");
+  const url = new URL(`https://graph.facebook.com/${env.META_API_VERSION || DEFAULT_VERSION}/${path}`);
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+  if (env.META_APP_SECRET) url.searchParams.set("appsecret_proof", await appSecretProof(token, env.META_APP_SECRET));
+  const res = await fetch(url.toString(), { headers: { authorization: `Bearer ${token}` } });
+  const body = (await res.json().catch(() => ({}))) as Record<string, unknown> & { error?: { message?: string } };
+  if (!res.ok) throw new Error(`Meta広告 API エラー (${res.status}): ${(body.error?.message ?? "").slice(0, 300)}`);
+  return body;
+}
+
+/**
+ * 広告IDから画像URLを引く（広告 → クリエイティブの2段階）。
+ * 画像広告は image_url、動画・カルーセルなどは thumbnail_url を使う。画像は付加情報なので、失敗しても空で返す
+ */
+export async function fetchAdImages(env: Env, adIds: string[]): Promise<Map<string, string>> {
+  const images = new Map<string, string>();
+  if (!adIds.length) return images;
+  try {
+    const ads = (await graphGet(env, "", { ids: adIds.join(","), fields: "creative" })) as Record<string, { creative?: { id?: string } }>;
+    const creativeOf = new Map(Object.entries(ads).flatMap(([adId, a]) => (a?.creative?.id ? [[adId, a.creative.id] as const] : [])));
+    if (!creativeOf.size) return images;
+    const creatives = (await graphGet(env, "", {
+      ids: [...new Set(creativeOf.values())].join(","),
+      fields: "image_url,thumbnail_url",
+      thumbnail_width: "600",
+      thumbnail_height: "600",
+    })) as Record<string, { image_url?: string; thumbnail_url?: string }>;
+    for (const [adId, creativeId] of creativeOf) {
+      const c = creatives[creativeId];
+      const url = c?.image_url || c?.thumbnail_url;
+      if (url) images.set(adId, url);
+    }
+  } catch (e) {
+    console.error("meta ad images", e);
+  }
+  return images;
+}
+
 async function insights(env: Env, accountId: string, params: Record<string, string>): Promise<InsightRow[]> {
   const token = env.META_ACCESS_TOKEN;
   if (!token) throw new Error("META_ACCESS_TOKEN が未設定です");
@@ -68,7 +108,7 @@ export async function fetchMeta(
         insights(env, id, { ...cur, level: "account", time_increment: "1", fields: "spend,inline_link_clicks,actions" }),
         insights(env, id, { ...cur, level: "campaign", fields: `campaign_id,campaign_name,objective,${base}`, sort: "spend_descending" }),
         insights(env, id, { ...cur, level: "account", breakdowns: "publisher_platform", fields: "spend,impressions,inline_link_clicks,actions" }),
-        insights(env, id, { ...cur, level: "ad", fields: `ad_name,campaign_name,${base}`, sort: "spend_descending", limit: "20" }),
+        insights(env, id, { ...cur, level: "ad", fields: `ad_id,ad_name,campaign_name,${base}`, sort: "spend_descending", limit: "20" }),
       ]);
       return { id, totals, prevTotals, daily, campaigns, platforms, ads };
     }),
@@ -121,9 +161,10 @@ export async function fetchMeta(
     }
   }
 
-  const ads: MetaAd[] = perAccount
+  const topAds = perAccount
     .flatMap((a) =>
       a.ads.map((r) => ({
+        id: String(r.ad_id ?? ""),
         name: String(r.ad_name ?? ""),
         campaign: String(r.campaign_name ?? ""),
         spend: n(r.spend),
@@ -135,6 +176,8 @@ export async function fetchMeta(
     )
     .sort((x, y) => y.spend - x.spend)
     .slice(0, 20);
+  const images = await fetchAdImages(env, topAds.map((a) => a.id).filter(Boolean));
+  const ads: MetaAd[] = topAds.map((a) => (images.has(a.id) ? { ...a, imageUrl: images.get(a.id) } : a));
 
   return {
     accounts: accountIds,

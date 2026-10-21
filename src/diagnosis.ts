@@ -127,7 +127,7 @@ function diagnoseAds(a: AdsReport, ga4: Ga4Report | undefined, items: DiagnosisI
       where: "Google広告 > キャンペーン（期間比較をオン）",
     });
   } else if (cpa && cpaPrev) {
-    passed.push(`Google広告の1件あたりの費用は前期間から大きく悪化していません（${yen(cpaPrev)} → ${yen(cpa)}）。`);
+    passed.push(`Google広告の1件あたりの費用は直前の28日から大きく悪化していません（${yen(cpaPrev)} → ${yen(cpa)}）。`);
   }
 
   // 5. 広告のクリックとGA4の訪問数のずれ（リンク先にGA4が入っていない・自動タグ設定漏れ）

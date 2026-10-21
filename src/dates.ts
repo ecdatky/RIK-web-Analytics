@@ -11,7 +11,7 @@ export function isCompareKey(v: string | null): v is CompareKey {
   return v === "prev" || v === "yoy";
 }
 
-export const COMPARE_LABEL: Record<CompareKey, string> = { prev: "前期間比", yoy: "前年同期比" };
+export const COMPARE_LABEL: Record<CompareKey, string> = { prev: "直前の同じ日数との比較", yoy: "前年の同じ日付との比較" };
 
 /** 日本時間の「今日」を YYYY-MM-DD で返す */
 export function todayJst(now: Date = new Date()): string {

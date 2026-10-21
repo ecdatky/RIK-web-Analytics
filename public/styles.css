@@ -301,10 +301,17 @@ tbody tr:hover { background: var(--surface-2); }
 .src-ga4 { --src: var(--ga4); --src-bg: var(--ga4-bg); }
 .src-ads { --src: var(--ads); --src-bg: var(--ads-bg); }
 .src-meta { --src: var(--meta); --src-bg: var(--meta-bg); }
-.src-head { display: flex; align-items: center; gap: 14px; padding-bottom: 12px; border-bottom: 2px solid color-mix(in srgb, var(--src) 25%, transparent); }
-.src-head h2 { margin: 0; font-size: 19px; }
+.src-head {
+  /* スクロール中も、いまどのデータを見ているかが分かるように色帯の見出しを上に貼り付ける */
+  position: sticky; top: var(--sticky-top, 120px); z-index: 4;
+  display: flex; align-items: center; gap: 14px; padding: 14px 20px; border-radius: 16px;
+  background: color-mix(in srgb, var(--src) 78%, #000); color: #fff;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--src) 30%, transparent);
+}
+.src-head h2 { margin: 0; font-size: 22px; color: #fff; letter-spacing: 0.02em; }
+.src-head .muted { color: rgba(255, 255, 255, 0.85); }
 .src-chip {
-  display: inline-flex; align-items: center; gap: 6px; background: var(--src-bg); color: var(--src);
+  display: inline-flex; align-items: center; gap: 6px; background: #fff; color: color-mix(in srgb, var(--src) 78%, #000);
   font-weight: 800; font-size: 12px; padding: 5px 12px; border-radius: 999px; white-space: nowrap;
 }
 .src-chip::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--src); }
@@ -405,6 +412,9 @@ h3.sub { margin: 4px 0 -6px; color: var(--text-muted); font-size: 12px; letter-s
 
 /* ---------- mobile ---------- */
 @media (max-width: 600px) {
+  .src-head { padding: 10px 14px; gap: 10px; border-radius: 12px; }
+  .src-head h2 { font-size: 18px; }
+  .src-head .muted { display: none; }
   .topbar { padding: 12px 16px; }
   .tabs { padding: 12px 16px 0; }
   .view { padding: 16px 16px 40px; gap: 14px; }
@@ -450,6 +460,7 @@ h3.sub { margin: 4px 0 -6px; color: var(--text-muted); font-size: 12px; letter-s
 .jump-nav .jn-ads { --src: var(--ads); }
 .jump-nav .jn-meta { --src: var(--meta); }
 .jump-nav button.on { background: var(--text-primary); color: var(--surface-1); }
+.jump-nav button.on.jn-ga4, .jump-nav button.on.jn-ads, .jump-nav button.on.jn-meta { background: color-mix(in srgb, var(--src) 78%, #000); color: #fff; }
 .jump-nav button.on i { box-shadow: 0 0 0 2px var(--surface-1); }
 
 /* ---------- グラフの注目点 ---------- */
@@ -586,3 +597,21 @@ h3.sub { margin: 4px 0 -6px; color: var(--text-muted); font-size: 12px; letter-s
   .diag-num { width: 28px; height: 28px; }
 }
 @media (prefers-reduced-motion: reduce) { .reveal.in .diag-item { animation: none; } }
+
+/* ---------- SNS広告の画像一覧 ---------- */
+.adg + .adg { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
+.adg-campaign { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 4px 0 10px; font-size: 15px; }
+.adg-campaign span { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; color: var(--meta); background: var(--meta-bg); }
+.adg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+.adg-card { margin: 0; display: flex; flex-direction: column; border-radius: 12px; overflow: hidden; background: var(--surface-2); }
+.adg-img { position: relative; aspect-ratio: 1 / 1; background: var(--surface-2); }
+.adg-img img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.adg-fallback { display: none; position: absolute; inset: 0; place-items: center; color: var(--text-muted); font-size: 12px; }
+.adg-noimg .adg-fallback { display: grid; }
+.adg-card figcaption { display: grid; gap: 6px; padding: 10px 12px 12px; font-size: 12px; }
+.adg-card strong { font-size: 13px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.adg-card dl { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 10px; margin: 0; }
+.adg-card dl div { display: flex; justify-content: space-between; gap: 6px; }
+.adg-card dt { color: var(--text-muted); }
+.adg-card dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 600; }
+@media (max-width: 600px) { .adg-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; } }
