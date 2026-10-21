@@ -4,6 +4,7 @@ import { fetchGa4 } from "./google/ga4";
 import { fetchAds } from "./google/ads";
 import { fetchAdsViaGa4 } from "./google/adsViaGa4";
 import { fetchMeta } from "./meta/meta";
+import { fetchMetaViaGa4 } from "./meta/metaViaGa4";
 import { generateAdvice } from "./ai/advice";
 import { diagnose, type Diagnosis } from "./diagnosis";
 import { DEMO_SITES, demoAdvice, demoAds, demoGa4, demoMeta } from "./demo";
@@ -59,6 +60,13 @@ export async function buildReport(env: Env, site: SiteConfig, range: RangeKey, c
         (e) => (report.metaError = errMsg(e)),
       ),
   ]);
+  // Meta広告から来た人のサイトでの成果をGA4で補う（失敗しても他は表示する）
+  if (report.meta && site.ga4PropertyId) {
+    report.meta.ga4 = await fetchMetaViaGa4(env, site.ga4PropertyId, current, previous).catch((e) => {
+      console.error("meta via ga4", site.id, e);
+      return undefined;
+    });
+  }
   return report;
 }
 

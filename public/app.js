@@ -1063,6 +1063,32 @@ function judgeMeta(x, avgCpa, objective) {
   return tags.map(([cls, label]) => `<span class="judge ${cls}">${label}</span>`).join("");
 }
 
+/** Meta広告から来た人のサイトでの成果（GA4）。Meta側でCVが取れていない時の判断材料 */
+function metaGa4Block(m) {
+  const g = m.ga4;
+  if (!g) return "";
+  const noPixel = m.totals.conversions.current === 0 && m.totals.conversions.previous === 0;
+  const rate = ratio(g.keyEvents.current, g.sessions.current);
+  const ratePrev = ratio(g.keyEvents.previous, g.sessions.previous);
+  return `<h3 class="sub">サイトでの成果（GA4で計測）</h3>
+  ${noPixel ? `<p class="muted small" style="margin:0">Meta側の成果が0件のため（Metaピクセル未設置の可能性）、Meta広告から来た人がサイトでどれだけ成果に至ったかをGA4で表示しています。</p>` : ""}
+  <div class="tiles">
+    ${tile("Meta広告から来た訪問", fmtInt(g.sessions.current), delta(g.sessions.current, g.sessions.previous), "GA4の参照元が ig・fb などで、メディアが paid の訪問")}
+    ${tile("そのうちの成果（キーイベント）", fmtInt(g.keyEvents.current), delta(g.keyEvents.current, g.keyEvents.previous))}
+    ${tile("訪問→成果の割合", fmtPct(rate), delta(rate, ratePrev))}
+    ${tile("成果1件あたりの広告費", g.keyEvents.current ? fmtYen(m.totals.spend.current / g.keyEvents.current) : "-", "", "Meta広告費 ÷ GA4のキーイベント（目安）")}
+  </div>
+  ${
+    g.campaigns.length
+      ? `<div class="card"><h3>GA4のキャンペーン名別（Meta広告から来た訪問）</h3><div class="table-wrap"><table>
+      <thead><tr><th>キャンペーン（UTM）</th><th class="r">訪問</th><th class="r">キーイベント</th><th class="r">割合</th></tr></thead>
+      <tbody>${g.campaigns
+        .map((c) => `<tr><td class="path">${esc(c.name)}</td><td class="r">${fmtInt(c.sessions)}</td><td class="r">${fmtInt(c.keyEvents)}</td><td class="r">${fmtPct(ratio(c.keyEvents, c.sessions))}</td></tr>`)
+        .join("")}</tbody></table></div></div>`
+      : ""
+  }`;
+}
+
 function renderMeta(m) {
   const t = m.totals;
   const r = (a, b) => [ratio(t[a].current, t[b].current), ratio(t[a].previous, t[b].previous)];
@@ -1091,6 +1117,7 @@ function renderMeta(m) {
     ${tile("CVR（リンククリック→CV）", fmtPct(cvr), delta(cvr, cvrPrev), "CV ÷ リンククリック")}
     ${hasValue ? tile("ROAS（CV値÷広告費）", fmtPct(roas), delta(roas, roasPrev)) : ""}
   </div>
+  ${metaGa4Block(m)}
   <h3 class="sub">露出と反応</h3>
   <div class="tiles">
     ${tile("表示回数", fmtInt(t.impressions.current), delta(t.impressions.current, t.impressions.previous))}

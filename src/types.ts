@@ -192,6 +192,15 @@ export interface MetaReport {
   /** facebook / instagram / audience_network / messenger など */
   platforms: { platform: string; spend: number; impressions: number; clicks: number; conversions: number }[];
   ads: MetaAd[];
+  /** Meta広告から来た訪問の、サイトでの成果（GA4で計測）。Metaピクセルが無くても分かる */
+  ga4?: MetaGa4Results;
+}
+
+export interface MetaGa4Results {
+  sessions: Kpi;
+  keyEvents: Kpi;
+  /** GA4のキャンペーン名（MetaのUTM）別。対象期間のみ */
+  campaigns: { name: string; sessions: number; keyEvents: number }[];
 }
 
 export interface SiteReport {
