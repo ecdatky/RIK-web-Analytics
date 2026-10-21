@@ -1,4 +1,4 @@
-import type { AdsCampaign, AdsKeyword, AdsReport, AdsSearchTerm, DateRange, Env } from "../types";
+import type { AdsAd, AdsCampaign, AdsKeyword, AdsReport, AdsSearchTerm, DateRange, Env } from "../types";
 import { eachDay } from "../dates";
 import { adsOAuthToken } from "./auth";
 
@@ -39,6 +39,128 @@ const yen = (micros: unknown) => n(micros) / 1_000_000;
 // インプレッションシェアは対象外のキャンペーン（P-MAX等）だと値が入らない
 const share = (v: unknown) => (v === undefined || v === null || v === "" ? null : Number(v));
 
+/** "a.b.c" の形で入れ子の値を取り出す */
+const pick = (o: unknown, path: string): unknown =>
+  path.split(".").reduce<unknown>((v, k) => (v && typeof v === "object" ? (v as Record<string, unknown>)[k] : undefined), o);
+const texts = (v: unknown) => (Array.isArray(v) ? v.map((x) => String(pick(x, "text") ?? "")).filter(Boolean) : []);
+const quote = (s: string) => `'${s.replace(/'/g, "\\'")}'`;
+
+/**
+ * 広告ごとの見た目（見出し・説明文・画像）と成果。
+ * 通常の広告は ad_group_ad、P-MAX は広告が無いのでアセットグループ単位で取る。
+ * 取れなくてもレポート全体は返したいので、失敗時は空にする。
+ */
+async function fetchAdCreatives(env: Env, cid: string, between: string): Promise<AdsAd[]> {
+  try {
+    const [adRows, groupRows, groupAssets] = await Promise.all([
+      gaql(
+        env,
+        cid,
+        `SELECT campaign.name, ad_group.name, ad_group_ad.ad.type, ad_group_ad.ad.final_urls,
+                ad_group_ad.ad.responsive_search_ad.headlines, ad_group_ad.ad.responsive_search_ad.descriptions,
+                ad_group_ad.ad.responsive_display_ad.headlines, ad_group_ad.ad.responsive_display_ad.descriptions,
+                ad_group_ad.ad.responsive_display_ad.marketing_images, ad_group_ad.ad.responsive_display_ad.square_marketing_images,
+                ad_group_ad.ad.image_ad.image_url,
+                metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
+         FROM ad_group_ad
+         WHERE ${between} AND metrics.impressions > 0
+         ORDER BY metrics.cost_micros DESC
+         LIMIT 30`,
+      ),
+      gaql(
+        env,
+        cid,
+        `SELECT campaign.name, asset_group.resource_name, asset_group.name, asset_group.final_urls,
+                metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
+         FROM asset_group
+         WHERE ${between} AND metrics.impressions > 0
+         ORDER BY metrics.cost_micros DESC
+         LIMIT 20`,
+      ),
+      gaql(
+        env,
+        cid,
+        `SELECT asset_group.resource_name, asset_group_asset.field_type, asset.text_asset.text, asset.image_asset.full_size.url
+         FROM asset_group_asset
+         WHERE asset_group_asset.field_type IN ('HEADLINE', 'DESCRIPTION', 'MARKETING_IMAGE', 'SQUARE_MARKETING_IMAGE')
+           AND asset_group_asset.status = 'ENABLED'`,
+      ),
+    ]);
+
+    // レスポンシブディスプレイ広告の画像はアセット名しか返らないので、URLを別に引く
+    const imageAsset = (r: GaqlRow) => {
+      const list = [
+        ...((pick(r, "adGroupAd.ad.responsiveDisplayAd.marketingImages") as unknown[]) ?? []),
+        ...((pick(r, "adGroupAd.ad.responsiveDisplayAd.squareMarketingImages") as unknown[]) ?? []),
+      ];
+      return list.map((x) => String(pick(x, "asset") ?? "")).find(Boolean);
+    };
+    const assetNames = [...new Set(adRows.map(imageAsset).filter((x): x is string => !!x))];
+    const assetUrls = new Map<string, string>();
+    if (assetNames.length) {
+      const rows = await gaql(
+        env,
+        cid,
+        `SELECT asset.resource_name, asset.image_asset.full_size.url FROM asset WHERE asset.resource_name IN (${assetNames.map(quote).join(", ")})`,
+      );
+      for (const r of rows) assetUrls.set(String(pick(r, "asset.resourceName")), String(pick(r, "asset.imageAsset.fullSize.url") ?? ""));
+    }
+
+    const metrics = (r: GaqlRow) => ({
+      impressions: n(r.metrics?.impressions),
+      clicks: n(r.metrics?.clicks),
+      cost: yen(r.metrics?.costMicros),
+      conversions: n(r.metrics?.conversions),
+    });
+
+    const ads: AdsAd[] = adRows.map((r) => {
+      const type = String(pick(r, "adGroupAd.ad.type") ?? "");
+      const display = type === "RESPONSIVE_DISPLAY_AD";
+      const asset = imageAsset(r);
+      return {
+        campaign: String(r.campaign?.name ?? ""),
+        adGroup: String(r.adGroup?.name ?? ""),
+        type,
+        headlines: texts(pick(r, display ? "adGroupAd.ad.responsiveDisplayAd.headlines" : "adGroupAd.ad.responsiveSearchAd.headlines")),
+        descriptions: texts(pick(r, display ? "adGroupAd.ad.responsiveDisplayAd.descriptions" : "adGroupAd.ad.responsiveSearchAd.descriptions")),
+        imageUrl: (asset && assetUrls.get(asset)) || (pick(r, "adGroupAd.ad.imageAd.imageUrl") as string | undefined) || undefined,
+        finalUrl: ((pick(r, "adGroupAd.ad.finalUrls") as string[] | undefined) ?? [])[0],
+        ...metrics(r),
+      };
+    });
+
+    const byGroup = new Map<string, { headlines: string[]; descriptions: string[]; images: string[] }>();
+    for (const r of groupAssets) {
+      const key = String(pick(r, "assetGroup.resourceName"));
+      const g = byGroup.get(key) ?? { headlines: [], descriptions: [], images: [] };
+      const field = String(pick(r, "assetGroupAsset.fieldType"));
+      const text = pick(r, "asset.textAsset.text");
+      const url = pick(r, "asset.imageAsset.fullSize.url");
+      if (field === "HEADLINE" && text) g.headlines.push(String(text));
+      else if (field === "DESCRIPTION" && text) g.descriptions.push(String(text));
+      else if (url) g.images.push(String(url));
+      byGroup.set(key, g);
+    }
+    for (const r of groupRows) {
+      const g = byGroup.get(String(pick(r, "assetGroup.resourceName")));
+      ads.push({
+        campaign: String(r.campaign?.name ?? ""),
+        adGroup: String(pick(r, "assetGroup.name") ?? ""),
+        type: "ASSET_GROUP",
+        headlines: g?.headlines ?? [],
+        descriptions: g?.descriptions ?? [],
+        imageUrl: g?.images[0],
+        finalUrl: ((pick(r, "assetGroup.finalUrls") as string[] | undefined) ?? [])[0],
+        ...metrics(r),
+      });
+    }
+    return ads;
+  } catch (e) {
+    console.error("ads creatives", cid, e);
+    return [];
+  }
+}
+
 function totalsQuery(r: DateRange) {
   return `SELECT metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value
           FROM customer WHERE segments.date BETWEEN '${r.startDate}' AND '${r.endDate}'`;
@@ -48,7 +170,7 @@ export async function fetchAds(env: Env, customerIds: string[], current: DateRan
   const perAccount = await Promise.all(
     customerIds.map(async (cid) => {
       const between = `segments.date BETWEEN '${current.startDate}' AND '${current.endDate}'`;
-      const [cur, prev, daily, campaigns, devices, keywords, searchTerms] = await Promise.all([
+      const [cur, prev, daily, campaigns, devices, keywords, searchTerms, creatives] = await Promise.all([
         gaql(env, cid, totalsQuery(current)),
         gaql(env, cid, totalsQuery(previous)),
         gaql(env, cid, `SELECT segments.date, metrics.cost_micros, metrics.clicks, metrics.conversions FROM customer WHERE ${between}`),
@@ -88,8 +210,9 @@ export async function fetchAds(env: Env, customerIds: string[], current: DateRan
            ORDER BY metrics.cost_micros DESC
            LIMIT 30`,
         ),
+        fetchAdCreatives(env, cid, between),
       ]);
-      return { cid, cur, prev, daily, campaigns, devices, keywords, searchTerms };
+      return { cid, cur, prev, daily, campaigns, devices, keywords, searchTerms, creatives };
     }),
   );
 
@@ -190,5 +313,9 @@ export async function fetchAds(env: Env, customerIds: string[], current: DateRan
     devices: [...deviceMap.values()].sort((x, y) => y.cost - x.cost),
     keywords,
     searchTerms,
+    ads: perAccount
+      .flatMap((a) => a.creatives)
+      .sort((x, y) => y.cost - x.cost)
+      .slice(0, 30),
   };
 }

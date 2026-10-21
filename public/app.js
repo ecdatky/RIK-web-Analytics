@@ -706,12 +706,12 @@ async function renderSummary() {
   const rows = await Promise.all(
     state.sites.map(async (s) => {
       try {
-        const [{ report }, { advice }, diagnosis] = await Promise.all([
+        const [{ report }, { advice, job }, diagnosis] = await Promise.all([
           loadReport(s.id),
-          api(`/api/advice?site=${encodeURIComponent(s.id)}`),
+          api(adviceUrl(s.id)),
           api(`/api/diagnosis?site=${encodeURIComponent(s.id)}`).then((r) => r.diagnosis, () => null),
         ]);
-        return { s, report, advice, diagnosis };
+        return { s, report, advice, job, diagnosis };
       } catch (e) {
         return { s, error: e.message };
       }
@@ -735,7 +735,7 @@ async function renderSummary() {
     })
     .join("");
   const body = rows
-    .map(({ s, report, advice, error }) => {
+    .map(({ s, report, advice, job, error }) => {
       if (error) return `<tr><td>${esc(s.name)}</td><td colspan="12" class="muted">${esc(error)}</td></tr>`;
       const h = health(report);
       const g = report.ga4?.totals;
@@ -761,7 +761,7 @@ async function renderSummary() {
         <td style="white-space:normal;min-width:260px">${
           adviceMatchesView(advice)
             ? esc(advice.headline || advice.summary)
-            : `<span class="muted">${advice ? "別の期間で作成済み（非表示）" : "未生成"}</span>`
+            : `<span class="muted">${job ? "作成中…" : "この期間は未作成"}</span>`
         }</td>
       </tr>`;
     })
@@ -938,6 +938,12 @@ function renderAds(a) {
       .join("")}</tbody>
   </table></div></div>
 
+  <div class="card"><h3>配信した広告（キャンペーン別・費用順）</h3>${
+    viaGa4
+      ? `<p class="muted">広告の画像や見出しは、GA4経由のデータでは取得できません。Google広告APIを接続すると、ここにキャンペーン別の広告を表示します。</p>`
+      : `<p class="muted small">画像のない検索広告は、見出しと説明文を検索結果の形で表示しています。P-MAXは広告グループの代わりにアセットグループ単位で、登録されている画像の1枚目を表示しています。</p>${googleAdGallery(a.ads ?? [], avgCpa)}`
+  }</div>
+
   <div class="grid grid-2">
     <div class="card"><h3>デバイス別の費用対効果</h3><div class="table-wrap"><table>
       <thead><tr><th>デバイス</th><th class="r">費用</th><th class="r">クリック</th><th class="r">CV</th><th class="r">CVR</th><th class="r">CPA</th></tr></thead>
@@ -973,6 +979,74 @@ function renderAds(a) {
       .join("") || `<tr><td colspan="7" class="muted">データなし</td></tr>`}</tbody>
   </table></div></div>
   </section>`;
+}
+
+const AD_TYPE_LABEL = {
+  RESPONSIVE_SEARCH_AD: "検索広告",
+  EXPANDED_TEXT_AD: "検索広告",
+  RESPONSIVE_DISPLAY_AD: "ディスプレイ広告",
+  IMAGE_AD: "イメージ広告",
+  ASSET_GROUP: "P-MAX",
+  DEMAND_GEN_MULTI_ASSET_AD: "デマンドジェネレーション",
+  DEMAND_GEN_CAROUSEL_AD: "デマンドジェネレーション",
+  DEMAND_GEN_VIDEO_RESPONSIVE_AD: "デマンドジェネレーション",
+  VIDEO_RESPONSIVE_AD: "動画広告",
+};
+
+const hostOf = (url) => {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "";
+  }
+};
+
+/** Google広告の広告をキャンペーンごとにカードで並べる。画像が無い検索広告は検索結果の見た目で出す */
+function googleAdGallery(ads, avgCpa) {
+  if (!ads.length) return `<p class="muted">データなし</p>`;
+  return adGroups(ads, (x) => {
+    const img = x.imageUrl
+      ? `<div class="adg-img"><img src="${esc(x.imageUrl)}" alt="${esc(x.headlines[0] ?? x.adGroup)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentElement.classList.add('adg-noimg');this.remove()"><span class="adg-fallback">画像なし</span></div>`
+      : `<div class="adg-img adg-text"><div class="serp">
+          <span class="serp-url"><b>スポンサー</b>${esc(hostOf(x.finalUrl))}</span>
+          <span class="serp-title">${esc(x.headlines.slice(0, 3).join(" | ") || "（見出しなし）")}</span>
+          <span class="serp-desc">${esc(x.descriptions[0] ?? "")}</span>
+        </div></div>`;
+    const tags = [];
+    if (avgCpa && x.conversions && x.cost / x.conversions <= avgCpa * 0.8) tags.push('<span class="judge good">効率良</span>');
+    if (avgCpa && x.conversions && x.cost / x.conversions >= avgCpa * 1.5) tags.push('<span class="judge bad">割高</span>');
+    if (avgCpa && !x.conversions && x.cost >= avgCpa) tags.push('<span class="judge bad">CVなし</span>');
+    return `<figure class="adg-card">${img}
+      <figcaption>
+        <span class="muted small">${esc(AD_TYPE_LABEL[x.type] ?? x.type)}${x.adGroup ? `｜${esc(x.adGroup)}` : ""}</span>
+        <strong title="${esc(x.headlines.join(" / "))}">${esc(x.headlines[0] ?? x.adGroup)}</strong>
+        <dl>
+          <div><dt>費用</dt><dd>${fmtYen(x.cost)}</dd></div>
+          <div><dt>CTR</dt><dd>${fmtPct(ratio(x.clicks, x.impressions))}</dd></div>
+          <div><dt>CV</dt><dd>${fmtDec(x.conversions)}</dd></div>
+          <div><dt>CPA</dt><dd>${x.conversions ? fmtYen(x.cost / x.conversions) : "-"}</dd></div>
+        </dl>
+        <div>${tags.join("")}</div>
+      </figcaption>
+    </figure>`;
+  });
+}
+
+/** 広告をキャンペーン名でまとめて、キャンペーンごとにカードの列を作る */
+function adGroups(ads, card) {
+  const groups = new Map();
+  for (const ad of ads) {
+    const key = ad.campaign || "（キャンペーン名なし）";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(ad);
+  }
+  return [...groups]
+    .map(
+      ([campaign, list]) => `<div class="adg">
+      <h4 class="adg-campaign"><span>キャンペーン</span>${esc(campaign)}</h4>
+      <div class="adg-grid">${list.map(card).join("")}</div></div>`,
+    )
+    .join("");
 }
 
 /** Meta広告の費用対効果の目安。平均CPAとの比較とフリークエンシーで判定する */
@@ -1070,19 +1144,9 @@ function renderMeta(m) {
 /** 広告をキャンペーンごとにまとめ、画像付きのカードで並べる */
 function metaAdGallery(ads, avgCpa) {
   if (!ads.length) return `<p class="muted">データなし</p>`;
-  const groups = new Map();
-  for (const ad of ads) {
-    const key = ad.campaign || "（キャンペーン名なし）";
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(ad);
-  }
-  return [...groups]
-    .map(
-      ([campaign, list]) => `<div class="adg">
-      <h4 class="adg-campaign"><span>キャンペーン</span>${esc(campaign)}</h4>
-      <div class="adg-grid">${list
-        .map(
-          (x) => `<figure class="adg-card">
+  return adGroups(
+    ads,
+    (x) => `<figure class="adg-card">
           <div class="adg-img${x.imageUrl ? "" : " adg-noimg"}">${
             x.imageUrl
               ? `<img src="${esc(x.imageUrl)}" alt="${esc(x.name)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentElement.classList.add('adg-noimg');this.remove()">`
@@ -1099,10 +1163,7 @@ function metaAdGallery(ads, avgCpa) {
             <div>${judgeMeta(x, avgCpa)}</div>
           </figcaption>
         </figure>`,
-        )
-        .join("")}</div></div>`,
-    )
-    .join("");
+  );
 }
 
 const TONE_LABEL = { good: "好調", warning: "注意", critical: "要対応", info: "参考" };
@@ -1122,40 +1183,135 @@ function adviceSection(sec, kindLabel) {
 }
 
 /** AIのひとことが、いま表示している期間・比較と同じ条件で作られたか。違うものは消さずに隠す */
+// AIのひとことは期間（集計期間×比較方法）ごとにサーバーへ保存され、全員で共有される。
+// 生成した日が変わると無効になり、サーバーは今日・今の期間のものだけを返す。
 const adviceMatchesView = (advice) => !!advice && advice.range === state.range && advice.compare === state.compare;
 const periodLabel = (range, compare) => `${RANGE_LABEL[range] ?? range}・${COMPARE_LABEL[compare] ?? compare}`;
+const adviceUrl = (siteId) => `/api/advice?site=${encodeURIComponent(siteId)}&range=${state.range}&compare=${state.compare}`;
 
-function renderAdvice(advice, siteId) {
+const ADVICE_STAGE = {
+  start: "生成を始めています",
+  data: "集計データを準備しています",
+  thinking: "AIがデータを読み込んで分析しています",
+  writing: "AIがひとことを書いています",
+  saving: "保存しています",
+};
+
+/** 生成中の表示（進み具合のバーと経過時間） */
+function adviceProgress(p) {
+  const sec = Math.max(0, Math.round((Date.now() - p.startedAt) / 1000));
+  const who = p.by ? `${esc(p.by)} さんが作成中です。` : "";
+  return `<div class="adv-progress" role="status">
+    <div class="adv-progress-head"><strong>${ADVICE_STAGE[p.stage] ?? ADVICE_STAGE.start}…</strong><span class="muted small">${p.pct != null ? `${Math.floor(p.pct)}%・` : ""}${sec}秒経過</span></div>
+    <div class="adv-bar${p.pct == null ? " indeterminate" : ""}"><i style="width:${p.pct ?? 30}%"></i></div>
+    <p class="muted small">${who}ふだんは30秒〜1分ほどで終わります。${p.by ? "できあがると自動で表示されます。" : "この画面を開いたままお待ちください。"}</p>
+  </div>`;
+}
+
+function renderAdvice(advice, siteId, progress = null) {
   const shown = adviceMatchesView(advice) ? advice : null;
-  const hidden = advice && !shown;
   const meta = shown
     ? `${fmtTime(shown.generatedAt)} 生成｜${periodLabel(shown.range, shown.compare)}のデータから${shown.demo ? "（サンプル）" : ""}`
     : "";
+  const busy = !!progress;
   const top = $("#advice");
   if (top) {
     top.innerHTML = `<div class="chart-head"><h2 style="margin:0">AIのひとこと ${shown?.status ? levelBadge(shown.status, "AIの判定：") : ""}</h2>
       <div><span class="muted small">${meta}</span>
-      <button class="btn" id="advice-gen" data-site="${esc(siteId)}">${advice ? "今の期間で作り直す" : "AIの総評を作る"}</button></div></div>
+      <button class="btn" id="advice-gen" data-site="${esc(siteId)}"${busy ? " disabled" : ""}>${busy ? "生成中…" : shown ? "作り直す" : "AIの総評を作る"}</button></div></div>
+      ${busy ? adviceProgress(progress) : ""}
       ${
         shown
           ? `${shown.headline ? `<p class="headline">${esc(shown.headline)}</p>` : ""}<p class="summary">${esc(shown.summary)}</p>${
               shown.glossary?.length ? glossaryBlock(shown.glossary) : ""
             }`
-          : hidden
-            ? `<p class="muted">いま表示している期間（${periodLabel(state.range, state.compare)}）とは別の期間（${periodLabel(advice.range, advice.compare)}・${fmtTime(advice.generatedAt)} 作成）のAIのひとことがあるため、非表示にしています。「今の期間で作り直す」を押すと、この期間の内容で表示されます（30秒〜1分ほどかかります）。</p>`
-            : `<p class="muted">まだAIの総評がありません。毎朝7時に自動で作られます。今すぐ作る場合はボタンを押してください（30秒〜1分ほどかかります）。</p>`
+          : busy
+            ? ""
+            : `<p class="muted">この期間（${periodLabel(state.range, state.compare)}）のAIのひとことは、今日はまだ作られていません。「28日・直前比」は毎朝7時に自動で作られます。今すぐ作る場合はボタンを押してください（30秒〜1分ほどかかります）。作ったひとことは全員の画面に表示され、日付が変わると消えます。</p>`
       }`;
   }
   const none = (label) =>
-    hidden
-      ? `<p class="muted small">${label}のAI総評は、表示中とは別の期間で作られたため非表示にしています。上の「今の期間で作り直す」で表示されます。</p>`
-      : `<p class="muted small">${label}のAI総評はまだありません。</p>`;
+    busy ? `<p class="muted small">${label}のAI総評を作成中です。</p>` : `<p class="muted small">この期間の${label}のAI総評はまだありません。</p>`;
   const ga4 = $("#advice-ga4");
   if (ga4) ga4.innerHTML = shown?.ga4 ? adviceSection(shown.ga4, "GA4") : none("GA4");
   const ads = $("#advice-ads");
   if (ads) ads.innerHTML = shown?.ads ? adviceSection(shown.ads, "Google広告") : none("Google広告");
   const metaBox = $("#advice-meta");
   if (metaBox) metaBox.innerHTML = shown?.meta ? adviceSection(shown.meta, "Meta広告") : none("Meta広告");
+}
+
+/** 表示中のサイト・期間が変わったら、待ち受けをやめる */
+const sameView = (siteId, range, compare) => state.tab === siteId && state.range === range && state.compare === compare;
+
+/** 保存済みのひとことを読み込む。誰かが作成中なら、できあがるまで数秒おきに確かめる */
+async function loadAdvice(siteId) {
+  const { range, compare } = state;
+  clearTimeout(state.advicePoll);
+  const { advice, job } = await api(adviceUrl(siteId));
+  if (!sameView(siteId, range, compare)) return;
+  if (advice || !job) return renderAdvice(advice, siteId);
+  renderAdvice(null, siteId, { stage: "start", pct: null, startedAt: Date.parse(job.startedAt), by: job.by });
+  state.advicePoll = setTimeout(() => loadAdvice(siteId).catch(() => undefined), 4000);
+}
+
+/** ひとことを作る。サーバーから届く進み具合（data: JSON の行）を順に表示する */
+async function generateAdvice(siteId) {
+  const { range, compare } = state;
+  clearTimeout(state.advicePoll);
+  // 最初の知らせが届くまでは、割合の無い（流れる）バーにする
+  const progress = { stage: "start", pct: null, startedAt: Date.now() };
+  const show = () => sameView(siteId, range, compare) && renderAdvice(null, siteId, progress);
+  show();
+  // 「分析中」の間はサーバーから進み具合が来ないので、経過時間の表示だけ1秒ごとに更新する
+  const ticker = setInterval(() => {
+    if (progress.stage === "thinking") progress.pct = Math.min(19, (progress.pct ?? 15) + 0.25);
+    show();
+  }, 1000);
+  try {
+    const res = await fetch(adviceUrl(siteId), { method: "POST" });
+    if (!(res.headers.get("content-type") || "").includes("text/event-stream")) {
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      if (body.job) return loadAdvice(siteId);
+      if (sameView(siteId, range, compare)) {
+        renderAdvice(body.advice, siteId);
+        if (body.cooldown) $("#advice").insertAdjacentHTML("beforeend", `<p class="muted small">直前に作成済みのため、5分以内の再生成は行いません。</p>`);
+      }
+      return;
+    }
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const events = buf.split("\n\n");
+      buf = events.pop();
+      for (const ev of events) {
+        const line = ev.split("\n").find((l) => l.startsWith("data: "));
+        if (!line) continue;
+        const msg = JSON.parse(line.slice(6));
+        if (msg.type === "progress") {
+          progress.stage = msg.stage;
+          progress.pct = Math.max(progress.pct ?? 0, msg.pct);
+          show();
+        } else if (msg.type === "done") {
+          if (sameView(siteId, range, compare)) renderAdvice(msg.advice, siteId);
+          return;
+        } else if (msg.type === "error") {
+          throw new Error(msg.error);
+        }
+      }
+    }
+    throw new Error("生成が途中で止まりました。もう一度お試しください。");
+  } catch (err) {
+    if (!sameView(siteId, range, compare)) return;
+    renderAdvice(null, siteId);
+    $("#advice").insertAdjacentHTML("beforeend", `<div class="alert">${esc(err.message)}</div>`);
+  } finally {
+    clearInterval(ticker);
+  }
 }
 
 // ---------- 診断 ----------
@@ -1304,9 +1460,7 @@ async function renderSite(siteId) {
     api(`/api/diagnosis?site=${encodeURIComponent(siteId)}`)
       .then(({ diagnosis }) => renderDiagnosis(diagnosis, siteId))
       .catch((e) => ($("#sec-diagnosis").innerHTML = `<div class="alert">${esc(e.message)}</div>`));
-    api(`/api/advice?site=${encodeURIComponent(siteId)}`)
-      .then(({ advice }) => renderAdvice(advice, siteId))
-      .catch((e) => ($("#advice").innerHTML = `<div class="alert">${esc(e.message)}</div>`));
+    loadAdvice(siteId).catch((e) => ($("#advice").innerHTML = `<div class="alert">${esc(e.message)}</div>`));
     if (site.hasGa4) startRealtime(siteId);
   };
 
@@ -1345,6 +1499,7 @@ function startRealtime(siteId) {
 
 function render() {
   clearInterval(state.realtimeTimer);
+  clearTimeout(state.advicePoll);
   destroyCharts();
   renderTabs();
   document.querySelectorAll("[data-range]").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.range === state.range)));
@@ -1420,22 +1575,7 @@ document.addEventListener("click", async (e) => {
     }
   }
   if (e.target.id === "advice-gen") {
-    const btn = e.target;
-    const siteId = btn.dataset.site;
-    btn.disabled = true;
-    btn.textContent = "生成中…";
-    try {
-      const { advice, cooldown } = await api(
-        `/api/advice?site=${encodeURIComponent(siteId)}&range=${state.range}&compare=${state.compare}`,
-        { method: "POST" },
-      );
-      renderAdvice(advice, siteId);
-      if (cooldown) $("#advice").insertAdjacentHTML("beforeend", `<p class="muted small">直前に作成済みのため、5分以内の再生成は行いません。</p>`);
-    } catch (err) {
-      $("#advice").insertAdjacentHTML("beforeend", `<div class="alert">${esc(err.message)}</div>`);
-      btn.disabled = false;
-      btn.textContent = "もう一度試す";
-    }
+    generateAdvice(e.target.dataset.site);
   }
 });
 

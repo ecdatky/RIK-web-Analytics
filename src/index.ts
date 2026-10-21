@@ -1,16 +1,18 @@
-import type { CompareKey, Env, RangeKey } from "./types";
+import type { CompareKey, Env, RangeKey, SiteConfig } from "./types";
 import { isCompareKey, isRangeKey } from "./dates";
 import { verifyAccess } from "./access";
 import { fetchRealtime } from "./google/ga4";
 import {
   adviceIsFromToday,
   getAdvice,
+  getAdviceJob,
   getCachedReport,
   getDiagnosis,
   hasGoogleAds,
   isDemo,
   isStale,
   loadSites,
+  purgeOldAdvice,
   refreshAdvice,
   refreshDiagnosis,
   refreshReport,
@@ -28,6 +30,35 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const WARM_RANGES: RangeKey[] = ["28d", "7d"];
 // AIアドバイスの再生成は1サイトにつきこの間隔以上あける（API費用の暴走防止）
 const ADVICE_COOLDOWN_MS = 5 * 60_000;
+
+/** AIのひとことを作りながら、進み具合をイベントストリーム（data: JSON）で返す */
+function adviceStream(env: Env, ctx: ExecutionContext, site: SiteConfig, range: RangeKey, compare: CompareKey, email: string): Response {
+  const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = writable.getWriter();
+  const enc = new TextEncoder();
+  const send = (o: unknown) => writer.write(enc.encode(`data: ${JSON.stringify(o)}\n\n`)).catch(() => undefined);
+  let last = "";
+  const work = refreshAdvice(env, site, range, compare, {
+    by: email,
+    onProgress: (stage, pct) => {
+      if (`${stage}:${pct}` === last) return;
+      last = `${stage}:${pct}`;
+      send({ type: "progress", stage, pct });
+    },
+  })
+    .then(
+      (advice) => send({ type: "done", advice }),
+      (e) => {
+        console.error("advice", site.id, e);
+        return send({ type: "error", error: errMsg(e) });
+      },
+    )
+    .finally(() => writer.close().catch(() => undefined));
+  ctx.waitUntil(work);
+  return new Response(readable, {
+    headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store" },
+  });
+}
 
 async function handleApi(request: Request, env: Env, ctx: ExecutionContext, url: URL, email: string): Promise<Response> {
   const sites = loadSites(env);
@@ -79,13 +110,16 @@ async function handleApi(request: Request, env: Env, ctx: ExecutionContext, url:
     case "/api/advice": {
       if (!site) return json({ error: "site が不正です" }, 400);
       if (request.method === "POST") {
-        const current = await getAdvice(env, site.id);
+        const current = await getAdvice(env, site.id, range, compare);
         if (current && Date.now() - Date.parse(current.generatedAt) < ADVICE_COOLDOWN_MS) {
           return json({ advice: current, cooldown: true });
         }
-        return json({ advice: await refreshAdvice(env, site, range, compare) });
+        const running = await getAdviceJob(env, site.id, range, compare);
+        if (running) return json({ job: running });
+        return adviceStream(env, ctx, site, range, compare, email);
       }
-      return json({ advice: await getAdvice(env, site.id) });
+      const [advice, job] = await Promise.all([getAdvice(env, site.id, range, compare), getAdviceJob(env, site.id, range, compare)]);
+      return json({ advice, job });
     }
 
     case "/api/diagnosis": {
@@ -116,7 +150,7 @@ export default {
 
   async scheduled(event, env, ctx): Promise<void> {
     const sites = loadSites(env);
-    // 07:00 JST の実行ではAIアドバイスも作り直す（その日にまだ無ければ）
+    // 07:00 JST の実行では前日までのAIのひとことを消し、28日・直前比のものを作り直す
     const morning = event.cron === "0 22 * * *";
     for (const site of sites) {
       for (const range of WARM_RANGES) {
@@ -125,7 +159,8 @@ export default {
       if (morning) {
         ctx.waitUntil(
           (async () => {
-            if (!adviceIsFromToday(await getAdvice(env, site.id))) await refreshAdvice(env, site);
+            await purgeOldAdvice(env, site.id);
+            if (!adviceIsFromToday(await getAdvice(env, site.id, "28d", "prev"))) await refreshAdvice(env, site);
           })().catch((e) => console.error("advice", site.id, e)),
         );
       }

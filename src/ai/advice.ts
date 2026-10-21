@@ -100,6 +100,7 @@ function adsDigest(a: AdsReport) {
     devices: a.devices,
     keywords: a.keywords.slice(0, 15),
     searchTerms: a.searchTerms.slice(0, 20),
+    ads: a.ads?.slice(0, 10),
   };
 }
 
@@ -146,12 +147,18 @@ export function buildDigest(site: SiteConfig, report: SiteReport) {
   };
 }
 
-export async function generateAdvice(env: Env, site: SiteConfig, report: SiteReport): Promise<Advice> {
+/** onText には、AIがここまでに書いた文字数が渡される（進み具合の表示用） */
+export async function generateAdvice(
+  env: Env,
+  site: SiteConfig,
+  report: SiteReport,
+  onText?: (chars: number) => void,
+): Promise<Advice> {
   if (!env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY が未設定です");
   const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
   const model = env.ADVICE_MODEL || DEFAULT_MODEL;
 
-  const response = await client.beta.messages.parse({
+  const stream = client.beta.messages.stream({
     model,
     max_tokens: 16000,
     // ポリシー判定で断られた場合はサーバー側で既定の代替モデルに切り替える
@@ -166,6 +173,12 @@ export async function generateAdvice(env: Env, site: SiteConfig, report: SiteRep
       },
     ],
   });
+  let chars = 0;
+  stream.on("text", (delta) => {
+    chars += delta.length;
+    onText?.(chars);
+  });
+  const response = await stream.finalMessage();
 
   if (response.stop_reason === "refusal") throw new Error("AIが回答を返しませんでした（refusal）");
   if (!response.parsed_output) throw new Error(`AIの出力を解釈できませんでした（stop_reason: ${response.stop_reason}）`);

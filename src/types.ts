@@ -124,6 +124,24 @@ export interface AdsReport {
   devices: { device: string; cost: number; clicks: number; conversions: number }[];
   keywords: AdsKeyword[];
   searchTerms: AdsSearchTerm[];
+  /** 広告ごとの見た目と成果（Google広告APIで取得した時だけ。GA4経由では取れない） */
+  ads?: AdsAd[];
+}
+
+/** Google広告の広告1件（P-MAXはアセットグループ単位） */
+export interface AdsAd {
+  campaign: string;
+  adGroup: string;
+  /** RESPONSIVE_SEARCH_AD / RESPONSIVE_DISPLAY_AD / IMAGE_AD / ASSET_GROUP など */
+  type: string;
+  headlines: string[];
+  descriptions: string[];
+  imageUrl?: string;
+  finalUrl?: string;
+  impressions: number;
+  clicks: number;
+  cost: number;
+  conversions: number;
 }
 
 export interface MetaKpis {

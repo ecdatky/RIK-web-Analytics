@@ -180,6 +180,23 @@ export function demoAds(site: SiteConfig, current: DateRange, _previous: DateRan
       cost: Math.round(cost * (share as number)),
       conversions: Math.round(conv * (share as number) * (cvMul as number) * 10) / 10,
     })),
+    ads: [
+      ["一般キーワード_エクステリア", "ウッドデッキ", "RESPONSIVE_SEARCH_AD", ["人工木ウッドデッキならRIK", "腐らない・ささくれない", "施工例を無料で見る"], ["メンテナンスの手間が少ない人工木デッキ。カラーとサイズを選べます。"], 0.2, 0.8],
+      ["一般キーワード_エクステリア", "フェンス", "RESPONSIVE_SEARCH_AD", ["目隠しフェンスの専門メーカー", "高さ・色を自由に選べる"], ["住まいに合わせて選べる目隠しフェンス。カタログを無料でお届けします。"], 0.15, 0.5],
+      ["P-MAX_製品", "製品全般", "ASSET_GROUP", ["庭をもっと楽しく", "エクステリアのユニマットリック"], ["ウッドデッキ・フェンス・テラスなど、庭づくりの製品をご紹介。"], 0.3, 0.9],
+      ["指名検索", "ブランド", "RESPONSIVE_SEARCH_AD", ["ユニマットリック公式サイト", "カタログ請求はこちら"], ["エクステリア製品の公式サイト。製品情報と施工例を掲載しています。"], 0.15, 2],
+    ].map(([campaign, adGroup, type, headlines, descriptions, share, cvMul]) => ({
+      campaign: campaign as string,
+      adGroup: adGroup as string,
+      type: type as string,
+      headlines: headlines as string[],
+      descriptions: descriptions as string[],
+      finalUrl: site.url,
+      impressions: Math.round(clicks * 28 * (share as number)),
+      clicks: Math.round(clicks * (share as number)),
+      cost: Math.round(cost * (share as number)),
+      conversions: Math.round(conv * (share as number) * (cvMul as number) * 10) / 10,
+    })),
   };
 }
 
