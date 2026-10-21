@@ -531,3 +531,58 @@ h3.sub { margin: 4px 0 -6px; color: var(--text-muted); font-size: 12px; letter-s
 @keyframes face-shake { 0%, 70%, 100% { transform: rotate(0); } 76% { transform: rotate(-7deg); } 84% { transform: rotate(6deg); } 92% { transform: rotate(-3deg); } }
 @keyframes sweat { 0% { transform: translateY(-1px); opacity: 0; } 30% { opacity: 1; } 100% { transform: translateY(3px); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .face-live, .face .sweat { animation: none; } }
+
+/* ---------- 診断結果と次にできる行動 ---------- */
+.diag-meta { display: flex; flex-wrap: wrap; gap: 8px 24px; margin: 12px 0 14px; }
+.diag-meta div { display: flex; gap: 8px; align-items: baseline; }
+.diag-meta dt { font-size: 12px; color: var(--text-muted); font-weight: 700; }
+.diag-meta dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; }
+.diag-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.sev { display: inline-flex; align-items: center; font-size: 12px; font-weight: 800; padding: 4px 10px; border-radius: 999px; white-space: nowrap; }
+.sev-high { background: var(--critical-bg); color: var(--critical); }
+.sev-medium { background: var(--warning-bg); color: var(--warning); }
+.sev-low { background: var(--info-bg); color: var(--info); }
+.sev-ok { background: var(--good-bg); color: var(--good); }
+.area { font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; background: var(--surface-3); color: var(--text-secondary); }
+.area-ga4 { background: var(--ga4-bg); color: var(--ga4); }
+.area-ads { background: var(--ads-bg); color: var(--ads); }
+.area-meta { background: var(--meta-bg); color: var(--meta); }
+.diag-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.diag-item {
+  display: grid; grid-template-columns: 36px 1fr; gap: 12px; padding: 16px; border-radius: var(--radius-sm);
+  background: var(--surface-2); border-left: 4px solid var(--sev-color, var(--border));
+}
+.diag-item.sev-high { --sev-color: var(--critical); }
+.diag-item.sev-medium { --sev-color: var(--warning); }
+.diag-item.sev-low { --sev-color: var(--info); }
+.diag-item.sev-high, .diag-item.sev-medium, .diag-item.sev-low { background: var(--surface-2); color: inherit; }
+.diag-num {
+  width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font-weight: 800;
+  background: var(--sev-color); color: #fff; font-variant-numeric: tabular-nums;
+}
+.diag-body { min-width: 0; }
+.diag-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.diag-title { font-family: var(--font-head); font-weight: 700; font-size: 16px; margin: 0 0 4px; line-height: 1.5; }
+.diag-evidence { margin: 0 0 10px; font-size: 13px; color: var(--text-secondary); }
+.diag-action { background: var(--surface-1); border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: 8px; }
+.diag-action b { font-size: 12px; color: var(--primary); }
+.diag-action b::before { content: "▶ "; }
+.diag-action p { margin: 2px 0 0; font-size: 14px; }
+.diag-where { margin: 0; font-size: 12px; color: var(--text-muted); overflow-wrap: anywhere; }
+.diag-where b { margin-right: 8px; color: var(--text-secondary); }
+.diag-passed { margin-top: 16px; padding: 12px 14px; border-radius: var(--radius-sm); background: var(--good-bg); }
+.diag-passed b { color: var(--good); font-size: 13px; }
+.diag-passed ul { margin: 6px 0 0; padding-left: 0; list-style: none; font-size: 13px; }
+.diag-passed li::before { content: "✓ "; color: var(--good); font-weight: 800; }
+.sc-todo { display: inline-block; margin-top: 6px; font-size: 12px; font-weight: 800; color: var(--critical); }
+.sc-todo.none { color: var(--good); }
+.reveal.in .diag-item { animation: diag-in 0.5s both; }
+.reveal.in .diag-item:nth-child(2) { animation-delay: 0.08s; }
+.reveal.in .diag-item:nth-child(3) { animation-delay: 0.16s; }
+.reveal.in .diag-item:nth-child(n+4) { animation-delay: 0.24s; }
+@keyframes diag-in { from { opacity: 0; transform: translateY(8px); } }
+@media (max-width: 640px) {
+  .diag-item { grid-template-columns: 1fr; padding: 14px; }
+  .diag-num { width: 28px; height: 28px; }
+}
+@media (prefers-reduced-motion: reduce) { .reveal.in .diag-item { animation: none; } }

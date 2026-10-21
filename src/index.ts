@@ -6,11 +6,13 @@ import {
   adviceIsFromToday,
   getAdvice,
   getCachedReport,
+  getDiagnosis,
   hasGoogleAds,
   isDemo,
   isStale,
   loadSites,
   refreshAdvice,
+  refreshDiagnosis,
   refreshReport,
 } from "./service";
 
@@ -84,6 +86,12 @@ async function handleApi(request: Request, env: Env, ctx: ExecutionContext, url:
         return json({ advice: await refreshAdvice(env, site, range, compare) });
       }
       return json({ advice: await getAdvice(env, site.id) });
+    }
+
+    case "/api/diagnosis": {
+      if (!site) return json({ error: "site が不正です" }, 400);
+      if (request.method === "POST") return json({ diagnosis: await refreshDiagnosis(env, site) });
+      return json({ diagnosis: await getDiagnosis(env, site) });
     }
   }
   return json({ error: "not found" }, 404);

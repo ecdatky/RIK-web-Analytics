@@ -5,6 +5,7 @@ import { fetchAds } from "./google/ads";
 import { fetchAdsViaGa4 } from "./google/adsViaGa4";
 import { fetchMeta } from "./meta/meta";
 import { generateAdvice } from "./ai/advice";
+import { diagnose, type Diagnosis } from "./diagnosis";
 import { DEMO_SITES, demoAdvice, demoAds, demoGa4, demoMeta } from "./demo";
 
 export function isDemo(env: Env): boolean {
@@ -65,6 +66,7 @@ export async function buildReport(env: Env, site: SiteConfig, range: RangeKey, c
 
 const reportKey = (siteId: string, range: RangeKey, compare: CompareKey) => `report:v2:${siteId}:${range}:${compare}`;
 const adviceKey = (siteId: string) => `advice:v2:${siteId}`;
+const diagKey = (siteId: string) => `diag:v1:${siteId}`;
 // KV には長めに残し、鮮度判定は fetchedAt で行う（古いデータでも即表示 → 裏で更新）
 const KV_KEEP_SECONDS = 3 * 86_400;
 
@@ -83,7 +85,11 @@ export async function refreshReport(env: Env, site: SiteConfig, range: RangeKey,
     (site.ga4PropertyId ? !report.ga4 : true) &&
     (hasGoogleAds(site) ? !report.ads : true) &&
     (site.metaAdAccountIds?.length ? !report.meta : true);
-  if (!failed) await env.CACHE.put(reportKey(site.id, range, compare), JSON.stringify(report), { expirationTtl: KV_KEEP_SECONDS });
+  if (!failed) {
+    await env.CACHE.put(reportKey(site.id, range, compare), JSON.stringify(report), { expirationTtl: KV_KEEP_SECONDS });
+    // 診断は「直近28日・前期間比」の取得のたびに作り直す（30分ごとの先読みで自動更新される）
+    if (range === "28d" && compare === "prev") await saveDiagnosis(env, diagnose(report));
+  }
   return report;
 }
 
@@ -114,4 +120,29 @@ export async function refreshAdvice(
 
 export function adviceIsFromToday(advice: Advice | null): boolean {
   return !!advice && todayJst(new Date(advice.generatedAt)) === todayJst();
+}
+
+// ---- 診断 ----
+
+async function saveDiagnosis(env: Env, d: Diagnosis): Promise<void> {
+  await env.CACHE.put(diagKey(d.siteId), JSON.stringify(d), { expirationTtl: 14 * 86_400 });
+}
+
+/** 保存済みの診断を返す。まだ無ければ28日分のレポートから作る */
+export async function getDiagnosis(env: Env, site: SiteConfig): Promise<Diagnosis> {
+  const saved = await env.CACHE.get<Diagnosis>(diagKey(site.id), "json");
+  if (saved) return saved;
+  const report = await getCachedReport(env, site.id, "28d", "prev");
+  if (!report) return refreshDiagnosis(env, site);
+  const d = diagnose(report);
+  await saveDiagnosis(env, d);
+  return d;
+}
+
+/** 最新のデータを取り直して診断し直す */
+export async function refreshDiagnosis(env: Env, site: SiteConfig): Promise<Diagnosis> {
+  const report = await refreshReport(env, site, "28d", "prev");
+  const d = diagnose(report);
+  await saveDiagnosis(env, d);
+  return d;
 }
