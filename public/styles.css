@@ -3,6 +3,9 @@
  * 和文: M PLUS 2 / 欧文・数字: Manrope（Google Fonts）
  * 庭と緑の会社らしい落ち着いたグリーンを基調に、余白と影で情報を区切る。
  */
+/* hidden 属性を .badge などの display 指定より優先する */
+[hidden] { display: none !important; }
+
 :root {
   color-scheme: light;
   --font: "Manrope", "M PLUS 2", "Hiragino Sans", "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
