@@ -609,6 +609,7 @@ function jumpNav(report) {
   const items = [
     ["sec-status", "いまの状況", ""],
     ["advice", "AIのひとこと", ""],
+    ["sec-diagnosis", "診断・次の行動", ""],
     report.ga4 && ["sec-ga4", "アクセス解析", "ga4"],
     report.ads && ["sec-ads", "Google広告", "ads"],
     report.meta && ["sec-meta", "SNS広告", "meta"],
@@ -702,8 +703,12 @@ async function renderSummary() {
   const rows = await Promise.all(
     state.sites.map(async (s) => {
       try {
-        const [{ report }, { advice }] = await Promise.all([loadReport(s.id), api(`/api/advice?site=${encodeURIComponent(s.id)}`)]);
-        return { s, report, advice };
+        const [{ report }, { advice }, diagnosis] = await Promise.all([
+          loadReport(s.id),
+          api(`/api/advice?site=${encodeURIComponent(s.id)}`),
+          api(`/api/diagnosis?site=${encodeURIComponent(s.id)}`).then((r) => r.diagnosis, () => null),
+        ]);
+        return { s, report, advice, diagnosis };
       } catch (e) {
         return { s, error: e.message };
       }
@@ -711,15 +716,18 @@ async function renderSummary() {
   );
   if (state.tab !== "summary") return;
   $("#sum-cards").innerHTML = rows
-    .map(({ s, report, advice, error }) => {
+    .map(({ s, report, advice, diagnosis, error }) => {
       const h = !error && health(report);
+      const todo = diagnosis?.items.filter((i) => i.severity !== "low").length ?? 0;
       if (!h) return "";
       const l = LEVELS[h.level];
       const point = advice?.headline || (h.bads[0] ? `気になる点：${h.bads[0].text}` : h.goods[0] ? `良くなった点：${h.goods[0].text}` : l.text);
       return `<button class="status-card lv-${h.level}" data-goto="${esc(s.id)}">
         ${s.url ? thumb(s, "sm") : ""}
         <span class="sc-icon" aria-hidden="true">${face(h.level, "face-live")}</span>
-        <span class="sc-body"><span class="sc-name">${esc(s.name)}</span><span class="sc-label">${l.label}</span><span class="sc-text">${esc(point)}</span></span>
+        <span class="sc-body"><span class="sc-name">${esc(s.name)}</span><span class="sc-label">${l.label}</span><span class="sc-text">${esc(point)}</span>${
+          diagnosis ? `<span class="sc-todo${todo ? "" : " none"}">${todo ? `要対応 ${todo}件` : "要対応なし"}・${fmtTime(diagnosis.checkedAt)} 診断</span>` : ""
+        }</span>
       </button>`;
     })
     .join("");
@@ -1100,6 +1108,65 @@ function renderAdvice(advice, siteId) {
   if (metaBox) metaBox.innerHTML = advice?.meta ? adviceSection(advice.meta, "Meta広告") : `<p class="muted small">Meta広告のAI総評はまだありません。「今の期間で作り直す」で作成できます。</p>`;
 }
 
+// ---------- 診断 ----------
+
+const SEVERITY = {
+  high: { label: "優先度 高", short: "高" },
+  medium: { label: "優先度 中", short: "中" },
+  low: { label: "優先度 低", short: "低" },
+};
+const AREA = { ga4: "アクセス解析", ads: "Google広告", meta: "SNS広告", measure: "計測" };
+const fmtDateTime = (iso) =>
+  new Date(iso).toLocaleString("ja-JP", {
+    year: "numeric", month: "long", day: "numeric", weekday: "short", hour: "2-digit", minute: "2-digit",
+  });
+const fmtDay = (ymd) => {
+  const [, m, d] = ymd.split("-").map(Number);
+  return `${m}/${d}`;
+};
+
+function renderDiagnosis(d, siteId) {
+  const box = $("#sec-diagnosis");
+  if (!box) return;
+  const counts = { high: 0, medium: 0, low: 0 };
+  d.items.forEach((i) => counts[i.severity]++);
+  const summary = d.items.length
+    ? Object.entries(counts)
+        .filter(([, n]) => n)
+        .map(([k, n]) => `<span class="sev sev-${k}">${SEVERITY[k].label} ${n}件</span>`)
+        .join("")
+    : `<span class="sev sev-ok">対応が必要な問題は見つかりませんでした</span>`;
+  const actions = d.items
+    .map(
+      (i, n) => `<li class="diag-item sev-${i.severity}">
+        <span class="diag-num" aria-hidden="true">${n + 1}</span>
+        <div class="diag-body">
+          <div class="diag-tags"><span class="sev sev-${i.severity}">${SEVERITY[i.severity].label}</span><span class="area area-${i.area}">${AREA[i.area] ?? ""}</span></div>
+          <p class="diag-title">${esc(i.title)}</p>
+          <p class="diag-evidence">${esc(i.evidence)}</p>
+          <div class="diag-action"><b>次にできる行動</b><p>${esc(i.action)}</p></div>
+          <p class="diag-where"><b>操作する場所</b>${esc(i.where)}</p>
+        </div>
+      </li>`,
+    )
+    .join("");
+  box.innerHTML = `<div class="chart-head"><h2 style="margin:0">診断結果と次にできる行動</h2>
+      <div><button class="btn" id="diag-run" data-site="${esc(siteId)}">最新データで再診断</button></div></div>
+    <dl class="diag-meta">
+      <div><dt>診断日時</dt><dd>${fmtDateTime(d.checkedAt)}</dd></div>
+      <div><dt>対象データ</dt><dd>${fmtDay(d.period.startDate)}〜${fmtDay(d.period.endDate)}（直近28日・前期間と比較）</dd></div>
+      <div><dt>データ取得</dt><dd>${fmtTime(d.dataFetchedAt)}</dd></div>
+    </dl>
+    <div class="diag-summary">${summary}</div>
+    ${d.items.length ? `<ol class="diag-list">${actions}</ol>` : ""}
+    ${
+      d.passed.length
+        ? `<div class="diag-passed"><b>問題なしだった点</b><ul>${d.passed.map((p) => `<li>${esc(p)}</li>`).join("")}</ul></div>`
+        : ""
+    }
+    <p class="muted small">決まった基準で数字を自動チェックした結果です。30分ごとのデータ更新に合わせて診断し直します。広告やGA4の設定は自動では変更しません。</p>`;
+}
+
 function drawTrend(g) {
   const canvas = $("#trend");
   if (!canvas) return;
@@ -1159,6 +1226,7 @@ async function renderSite(siteId) {
       <div id="sec-status">${healthHero(report)}</div>
       ${site.hasGa4 ? `<div class="tiles today" id="today">${todayTiles(report.ga4)}</div>` : ""}
       <div class="card advice" id="advice"><p class="muted">AIの総評を読み込み中…</p></div>
+      <div class="card diag" id="sec-diagnosis"><p class="muted">診断結果を読み込み中…</p></div>
       ${report.ga4 ? renderGa4(report.ga4) : ""}
       ${report.ads ? renderAds(report.ads) : ""}
       ${report.meta ? renderMeta(report.meta) : ""}
@@ -1183,6 +1251,9 @@ async function renderSite(siteId) {
       $("#metric-seg").querySelectorAll("button").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.metric === m)));
       drawTrend(report.ga4);
     });
+    api(`/api/diagnosis?site=${encodeURIComponent(siteId)}`)
+      .then(({ diagnosis }) => renderDiagnosis(diagnosis, siteId))
+      .catch((e) => ($("#sec-diagnosis").innerHTML = `<div class="alert">${esc(e.message)}</div>`));
     api(`/api/advice?site=${encodeURIComponent(siteId)}`)
       .then(({ advice }) => renderAdvice(advice, siteId))
       .catch((e) => ($("#advice").innerHTML = `<div class="alert">${esc(e.message)}</div>`));
@@ -1283,6 +1354,19 @@ document.addEventListener("click", async (e) => {
     } finally {
       btn.disabled = false;
       btn.textContent = "最新に更新";
+    }
+  }
+  if (e.target.id === "diag-run") {
+    const btn = e.target;
+    btn.disabled = true;
+    btn.textContent = "診断中…";
+    try {
+      const { diagnosis } = await api(`/api/diagnosis?site=${encodeURIComponent(btn.dataset.site)}`, { method: "POST" });
+      renderDiagnosis(diagnosis, btn.dataset.site);
+    } catch (err) {
+      $("#sec-diagnosis").insertAdjacentHTML("beforeend", `<div class="alert">${esc(err.message)}</div>`);
+      btn.disabled = false;
+      btn.textContent = "もう一度試す";
     }
   }
   if (e.target.id === "advice-gen") {
