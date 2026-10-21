@@ -175,6 +175,8 @@ export interface MetaAd {
   campaign: string;
   /** 広告の画像（動画・カルーセルはサムネイル）。取れなかった場合は無い。URLは数日で期限切れになる */
   imageUrl?: string;
+  /** 広告を押した先のURL（クリエイティブから取得）。取れなかった場合は無い */
+  link?: string;
   spend: number;
   impressions: number;
   reach: number;
@@ -192,8 +194,20 @@ export interface MetaReport {
   /** facebook / instagram / audience_network / messenger など */
   platforms: { platform: string; spend: number; impressions: number; clicks: number; conversions: number }[];
   ads: MetaAd[];
+  /** 広告のリンク先ドメイン別の費用（費用の多い広告から最大20件分）。旧データには無い */
+  destinations?: MetaDestination[];
   /** Meta広告から来た訪問の、サイトでの成果（GA4で計測）。Metaピクセルが無くても分かる */
   ga4?: MetaGa4Results;
+}
+
+export interface MetaDestination {
+  /** www. を除いたドメイン（例: peatix.com） */
+  host: string;
+  spend: number;
+  clicks: number;
+  ads: number;
+  /** そのドメインのリンク先の例 */
+  example: string;
 }
 
 export interface MetaGa4Results {

@@ -1063,11 +1063,57 @@ function judgeMeta(x, avgCpa, objective) {
   return tags.map(([cls, label]) => `<span class="judge ${cls}">${label}</span>`).join("");
 }
 
+// 自社のGA4・Metaピクセルを入れられない外部の受付ページ（src/diagnosis.ts と同じ判定）
+const OFFSITE_SERVICES = [
+  [/(^|\.)peatix\.com$/, "Peatix"],
+  [/(^|\.)connpass\.com$/, "connpass"],
+  [/(^|\.)eventbrite\.(com|co\.jp)$/, "Eventbrite"],
+  [/(^|\.)doorkeeper\.jp$/, "Doorkeeper"],
+];
+const offsiteLabel = (host) => OFFSITE_SERVICES.find(([re]) => re.test(host))?.[1];
+
+/** 広告費の半分以上が外部の受付ページ行きなら、そのサービス名 */
+function metaOffsite(m) {
+  const dests = m.destinations ?? [];
+  const known = dests.reduce((s, d) => s + d.spend, 0);
+  if (!known) return null;
+  for (const [, label] of OFFSITE_SERVICES) {
+    const share = dests.filter((d) => offsiteLabel(d.host) === label).reduce((s, d) => s + d.spend, 0) / known;
+    if (share >= 0.5) return label;
+  }
+  return null;
+}
+
+/** 広告のリンク先ドメイン別の費用 */
+function metaDestBlock(m) {
+  const dests = m.destinations ?? [];
+  if (!dests.length) return "";
+  const known = dests.reduce((s, d) => s + d.spend, 0);
+  const offsite = metaOffsite(m);
+  return `<h3 class="sub">広告のリンク先</h3>
+  ${
+    offsite
+      ? `<p class="muted small" style="margin:0">広告の多くが${esc(offsite)}のページに誘導しています。${esc(offsite)}のページには自社のGA4やMetaピクセルを入れられないため、Meta側のCVやGA4の訪問には申込が出てきません。申込数は${esc(offsite)}の管理画面で確認してください。</p>`
+      : ""
+  }
+  <div class="card"><div class="table-wrap"><table>
+    <thead><tr><th>リンク先</th><th class="r">広告数</th><th class="r">費用</th><th class="r">割合</th><th class="r">リンククリック</th></tr></thead>
+    <tbody>${dests
+      .map(
+        (d) =>
+          `<tr><td class="path"><a href="${esc(d.example)}" target="_blank" rel="noopener noreferrer">${esc(d.host)}</a>${
+            offsiteLabel(d.host) ? ` <span class="judge warn">${esc(offsiteLabel(d.host))}</span>` : ""
+          }</td><td class="r">${fmtInt(d.ads)}</td><td class="r">${fmtYen(d.spend)}</td><td class="r">${fmtPct(ratio(d.spend, known))}</td><td class="r">${fmtInt(d.clicks)}</td></tr>`,
+      )
+      .join("")}</tbody></table></div>
+    <p class="muted small">費用の多い広告から最大20件のリンク先をまとめています。</p></div>`;
+}
+
 /** Meta広告から来た人のサイトでの成果（GA4）。Meta側でCVが取れていない時の判断材料 */
 function metaGa4Block(m) {
   const g = m.ga4;
   if (!g) return "";
-  const noPixel = m.totals.conversions.current === 0 && m.totals.conversions.previous === 0;
+  const noPixel = m.totals.conversions.current === 0 && m.totals.conversions.previous === 0 && !metaOffsite(m);
   const rate = ratio(g.keyEvents.current, g.sessions.current);
   const ratePrev = ratio(g.keyEvents.previous, g.sessions.previous);
   return `<h3 class="sub">サイトでの成果（GA4で計測）</h3>
@@ -1117,6 +1163,7 @@ function renderMeta(m) {
     ${tile("CVR（リンククリック→CV）", fmtPct(cvr), delta(cvr, cvrPrev), "CV ÷ リンククリック")}
     ${hasValue ? tile("ROAS（CV値÷広告費）", fmtPct(roas), delta(roas, roasPrev)) : ""}
   </div>
+  ${metaDestBlock(m)}
   ${metaGa4Block(m)}
   <h3 class="sub">露出と反応</h3>
   <div class="tiles">
@@ -1168,6 +1215,14 @@ function renderMeta(m) {
   </section>`;
 }
 
+function hostName(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
 /** 広告をキャンペーンごとにまとめ、画像付きのカードで並べる */
 function metaAdGallery(ads, avgCpa) {
   if (!ads.length) return `<p class="muted">データなし</p>`;
@@ -1181,6 +1236,7 @@ function metaAdGallery(ads, avgCpa) {
           }<span class="adg-fallback">画像なし</span></div>
           <figcaption>
             <strong title="${esc(x.name)}">${esc(x.name)}</strong>
+            ${x.link ? `<span class="muted small" title="${esc(x.link)}">リンク先: ${esc(hostName(x.link))}</span>` : ""}
             <dl>
               <div><dt>費用</dt><dd>${fmtYen(x.spend)}</dd></div>
               <div><dt>CTR</dt><dd>${fmtPct(ratio(x.clicks, x.impressions))}</dd></div>

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchMeta, sumActions } from "../src/meta/meta";
+import { creativeLink, fetchMeta, sumActions } from "../src/meta/meta";
 import type { Env } from "../src/types";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -45,7 +45,9 @@ describe("fetchMeta", () => {
         }
         if (p.get("ids")) {
           expect(p.get("thumbnail_width")).toBe("600");
-          return Response.json({ cr1: { id: "cr1", thumbnail_url: "https://thumb.example/cr1.jpg" } });
+          return Response.json({
+            cr1: { id: "cr1", thumbnail_url: "https://thumb.example/cr1.jpg", object_story_spec: { link_data: { link: "https://www.peatix.com/event/123?utm_source=meta" } } },
+          });
         }
         if (p.get("level") === "ad") {
           return Response.json({ data: [{ ad_id: "ad1", ad_name: "A", campaign_name: "C", spend: "50", impressions: "200", reach: "100", inline_link_clicks: "3" }] });
@@ -71,6 +73,8 @@ describe("fetchMeta", () => {
     expect(r.campaigns[0]).toMatchObject({ objective: "OUTCOME_LEADS", reach: 400, conversions: 2 });
     expect(r.platforms).toEqual([{ platform: "instagram", spend: 360, impressions: 1200, clicks: 16, conversions: 4 }]);
     expect(r.ads[0]).toMatchObject({ id: "ad1", name: "A", conversions: 0, imageUrl: "https://thumb.example/cr1.jpg" });
+    expect(r.ads[0].link).toBe("https://www.peatix.com/event/123?utm_source=meta");
+    expect(r.destinations).toEqual([{ host: "peatix.com", spend: 100, clicks: 6, ads: 2, example: "https://www.peatix.com/event/123?utm_source=meta" }]);
     expect(r.conversionActions).toEqual(["lead"]);
     expect(urls.some((u) => u.pathname === "/v24.0/act_123/insights")).toBe(true);
     expect(urls.some((u) => u.pathname === "/v24.0/act_456/insights")).toBe(true);
@@ -105,5 +109,11 @@ describe("fetchMeta", () => {
     await expect(
       fetchMeta({ META_ACCESS_TOKEN: "bad" } as Env, ["1"], { startDate: "2026-10-16", endDate: "2026-10-16" }, { startDate: "2026-10-15", endDate: "2026-10-15" }),
     ).rejects.toThrow("Meta広告 API エラー (400, 1): Invalid OAuth access token");
+  });
+
+  it("動画・ダイナミック広告でもリンク先を取り出す", () => {
+    expect(creativeLink({ object_story_spec: { video_data: { call_to_action: { value: { link: "https://peatix.com/event/1" } } } } })).toBe("https://peatix.com/event/1");
+    expect(creativeLink({ asset_feed_spec: { link_urls: [{ website_url: "https://example.com/a" }] } })).toBe("https://example.com/a");
+    expect(creativeLink({ image_url: "x" })).toBeUndefined();
   });
 });

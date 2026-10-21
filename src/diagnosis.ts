@@ -1,4 +1,4 @@
-import type { AdsReport, Ga4Report, MetaReport, SiteReport } from "./types";
+import type { AdsReport, Ga4Report, MetaDestination, MetaReport, SiteReport } from "./types";
 
 // レポートの数字から、GA4・Google広告・Meta広告の問題点と「次にできる行動」を決まったルールで洗い出す。
 // AIの総評と違って毎回同じ基準で判定するので、改善したかどうかを日々の診断で追える。
@@ -238,12 +238,50 @@ function diagnoseGa4(g: Ga4Report, items: DiagnosisItem[], passed: string[]) {
   }
 }
 
+// 自社のGA4・Metaピクセルを入れられない外部の受付ページ。ここに送る広告は、サイト側では成果を測れない
+const OFFSITE_SERVICES: { pattern: RegExp; label: string; where: string }[] = [
+  { pattern: /(^|\.)peatix\.com$/, label: "Peatix", where: "Peatix 主催者管理画面 > イベント > ホーム（閲覧数・流入元・申込数）" },
+  { pattern: /(^|\.)connpass\.com$/, label: "connpass", where: "connpass のイベント管理画面" },
+  { pattern: /(^|\.)eventbrite\.(com|co\.jp)$/, label: "Eventbrite", where: "Eventbrite のイベント管理画面" },
+  { pattern: /(^|\.)doorkeeper\.jp$/, label: "Doorkeeper", where: "Doorkeeper のイベント管理画面" },
+];
+
+/** 広告費の半分以上が外部の受付ページ行きなら、その行き先を返す */
+export function offsiteDestination(m: MetaReport): { service: (typeof OFFSITE_SERVICES)[number]; dests: MetaDestination[]; share: number } | undefined {
+  const dests = m.destinations ?? [];
+  const known = dests.reduce((s, d) => s + d.spend, 0);
+  if (!known) return;
+  for (const service of OFFSITE_SERVICES) {
+    const hit = dests.filter((d) => service.pattern.test(d.host));
+    const share = hit.reduce((s, d) => s + d.spend, 0) / known;
+    if (share >= 0.5) return { service, dests: hit, share };
+  }
+}
+
 function diagnoseMeta(m: MetaReport, items: DiagnosisItem[], passed: string[]) {
   const t = m.totals;
   const spend = t.spend.current;
   if (spend <= 0) return;
-  // Meta側のCVが2期間とも0なら、ピクセル（データセット）か成果イベントが設定されていない
-  if (t.conversions.current === 0 && t.conversions.previous === 0) {
+  const offsite = offsiteDestination(m);
+  if (offsite) {
+    // Peatix 等に送っている広告は、Meta側の成果0・GA4の訪問なしが正常。ピクセル設置やキャンペーン停止を勧めない
+    const { service, dests, share } = offsite;
+    const g = m.ga4;
+    items.push({
+      id: "measure-meta-offsite",
+      area: "measure",
+      severity: "medium",
+      title: `Meta広告の行き先が${service.label}のため、このダッシュボードでは申込数を測れません`,
+      evidence: `リンク先が分かった広告の費用のうち${pct(share)}が${service.label}（${dests.map((d) => d.host).join("、")}）行きで、${int(
+        dests.reduce((s, d) => s + d.clicks, 0),
+      )}クリック。${service.label}のページには自社のGA4やMetaピクセルを入れられないため、Meta側の成果は0件${
+        g ? `、GA4でもMeta広告から来た訪問は${int(g.sessions.current)}回` : ""
+      }になります。`,
+      action: `広告の効果は${service.label}の管理画面で、イベントページの閲覧数・流入元と申込数を見て判断する。広告のリンクにURLパラメーターを付けておくと、流入元で広告からの申込を区別できる。サイトにMetaピクセルを入れても、この広告の申込は計測できない。`,
+      where: `${service.where} / Meta広告マネージャ > 広告 > ウェブサイトのURL`,
+    });
+  } else if (t.conversions.current === 0 && t.conversions.previous === 0) {
+    // Meta側のCVが2期間とも0なら、ピクセル（データセット）か成果イベントが設定されていない
     const g = m.ga4;
     items.push({
       id: "measure-meta-pixel",
@@ -260,7 +298,8 @@ function diagnoseMeta(m: MetaReport, items: DiagnosisItem[], passed: string[]) {
   }
   const cpa = ratio(spend, t.conversions.current);
   const awareness = new Set(["OUTCOME_AWARENESS", "BRAND_AWARENESS", "REACH", "OUTCOME_TRAFFIC", "LINK_CLICKS", "POST_ENGAGEMENT", "OUTCOME_ENGAGEMENT"]);
-  const zeros = m.campaigns
+  // 外部の受付ページに送っている場合、成果0は計測できないだけなので「成果0のキャンペーン」は出さない
+  const zeros = (offsite ? [] : m.campaigns)
     .filter((c) => c.conversions === 0 && !awareness.has(c.objective) && c.spend >= Math.max(cpa || 0, spend * 0.1))
     .sort((a, b) => b.spend - a.spend);
   for (const c of zeros.slice(0, 2)) {

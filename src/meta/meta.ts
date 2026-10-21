@@ -1,4 +1,4 @@
-import type { DateRange, Env, MetaAd, MetaCampaign, MetaReport } from "../types";
+import type { DateRange, Env, MetaAd, MetaCampaign, MetaDestination, MetaReport } from "../types";
 import { eachDay } from "../dates";
 
 // Graph API は各バージョンが約2年使える。変数 META_API_VERSION で上書きできるようにしておく。
@@ -36,32 +36,80 @@ async function graphGet(env: Env, path: string, params: Record<string, string>):
   return body;
 }
 
+type Cta = { value?: { link?: string } };
+type CreativeRow = {
+  image_url?: string;
+  thumbnail_url?: string;
+  link_url?: string;
+  object_url?: string;
+  object_story_spec?: { link_data?: { link?: string; call_to_action?: Cta }; video_data?: { call_to_action?: Cta } };
+  asset_feed_spec?: { link_urls?: { website_url?: string }[] };
+};
+
+/** クリエイティブから、広告を押した先のURLを取り出す（画像・動画・ダイナミック広告で入る場所が違う） */
+export function creativeLink(c: CreativeRow | undefined): string | undefined {
+  const s = c?.object_story_spec;
+  return (
+    s?.link_data?.call_to_action?.value?.link ||
+    s?.link_data?.link ||
+    s?.video_data?.call_to_action?.value?.link ||
+    c?.asset_feed_spec?.link_urls?.find((l) => l.website_url)?.website_url ||
+    c?.link_url ||
+    c?.object_url ||
+    undefined
+  );
+}
+
 /**
- * 広告IDから画像URLを引く（広告 → クリエイティブの2段階）。
- * 画像広告は image_url、動画・カルーセルなどは thumbnail_url を使う。画像は付加情報なので、失敗しても空で返す
+ * 広告IDから画像URLとリンク先を引く（広告 → クリエイティブの2段階）。
+ * 画像広告は image_url、動画・カルーセルなどは thumbnail_url を使う。付加情報なので、失敗しても空で返す
  */
-export async function fetchAdImages(env: Env, adIds: string[]): Promise<Map<string, string>> {
-  const images = new Map<string, string>();
-  if (!adIds.length) return images;
+export async function fetchAdCreatives(env: Env, adIds: string[]): Promise<Map<string, { imageUrl?: string; link?: string }>> {
+  const out = new Map<string, { imageUrl?: string; link?: string }>();
+  if (!adIds.length) return out;
   try {
     const ads = (await graphGet(env, "", { ids: adIds.join(","), fields: "creative" })) as Record<string, { creative?: { id?: string } }>;
     const creativeOf = new Map(Object.entries(ads).flatMap(([adId, a]) => (a?.creative?.id ? [[adId, a.creative.id] as const] : [])));
-    if (!creativeOf.size) return images;
+    if (!creativeOf.size) return out;
     const creatives = (await graphGet(env, "", {
       ids: [...new Set(creativeOf.values())].join(","),
-      fields: "image_url,thumbnail_url",
+      fields: "image_url,thumbnail_url,link_url,object_url,object_story_spec,asset_feed_spec{link_urls}",
       thumbnail_width: "600",
       thumbnail_height: "600",
-    })) as Record<string, { image_url?: string; thumbnail_url?: string }>;
+    })) as Record<string, CreativeRow>;
     for (const [adId, creativeId] of creativeOf) {
       const c = creatives[creativeId];
-      const url = c?.image_url || c?.thumbnail_url;
-      if (url) images.set(adId, url);
+      const imageUrl = c?.image_url || c?.thumbnail_url;
+      const link = creativeLink(c);
+      if (imageUrl || link) out.set(adId, { ...(imageUrl && { imageUrl }), ...(link && { link }) });
     }
   } catch (e) {
-    console.error("meta ad images", e);
+    console.error("meta ad creatives", e);
   }
-  return images;
+  return out;
+}
+
+const hostOf = (url: string) => {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+};
+
+/** 広告費をリンク先のドメインごとにまとめる。Peatix など外部のページに送っているかを見分けるため */
+export function destinationsOf(ads: MetaAd[]): MetaDestination[] {
+  const map = new Map<string, MetaDestination>();
+  for (const a of ads) {
+    const host = a.link ? hostOf(a.link) : "";
+    if (!host) continue;
+    const d = map.get(host) ?? { host, spend: 0, clicks: 0, ads: 0, example: a.link! };
+    d.spend += a.spend;
+    d.clicks += a.clicks;
+    d.ads += 1;
+    map.set(host, d);
+  }
+  return [...map.values()].sort((x, y) => y.spend - x.spend);
 }
 
 async function insights(env: Env, accountId: string, params: Record<string, string>): Promise<InsightRow[]> {
@@ -176,8 +224,8 @@ export async function fetchMeta(
     )
     .sort((x, y) => y.spend - x.spend)
     .slice(0, 20);
-  const images = await fetchAdImages(env, topAds.map((a) => a.id).filter(Boolean));
-  const ads: MetaAd[] = topAds.map((a) => (images.has(a.id) ? { ...a, imageUrl: images.get(a.id) } : a));
+  const creatives = await fetchAdCreatives(env, topAds.map((a) => a.id).filter(Boolean));
+  const ads: MetaAd[] = topAds.map((a) => ({ ...a, ...creatives.get(a.id) }));
 
   return {
     accounts: accountIds,
@@ -194,5 +242,6 @@ export async function fetchMeta(
     campaigns,
     platforms: [...platformMap.values()].sort((x, y) => y.spend - x.spend),
     ads,
+    destinations: destinationsOf(ads),
   };
 }

@@ -72,7 +72,8 @@ Meta広告では次の観点で効果を判断します。CVは conversionAction
 - フリークエンシー（表示回数÷リーチ）。3回を超えるキャンペーンは見飽きによる効率低下の可能性
 - 配信面（Facebook / Instagram / Audience Network など）別の費用対効果
 - 費用が掛かっているのにCVの無い広告（停止・差し替え候補）。ただし認知・トラフィック目的のキャンペーンはCV以外の指標でも評価します
-- Metaの CV が0で siteResultsFromGa4 がある場合は、Metaピクセル未設置などで Meta 側が成果を計測できていない可能性が高いので、「成果が出ていない」と決めつけず、GA4で計測した Meta 広告経由の訪問とキーイベントで効果を判断します
+- destinations は広告のリンク先ドメイン別の費用です。費用の大半が peatix.com などのイベント受付サービス行きの場合、そのページには自社のGA4もMetaピクセルも入れられないため、Meta側のCVが0、siteResultsFromGa4 の訪問が少ないのは計測上当然です。この場合は成果0を理由に停止や縮小を勧めず、ピクセル設置も勧めません。CTR・CPC・CPM・フリークエンシーで広告の反応を評価し、申込数はPeatix等の管理画面（閲覧数・流入元・申込数）で確かめるよう書きます
+- それ以外で Metaの CV が0で siteResultsFromGa4 がある場合は、Metaピクセル未設置などで Meta 側が成果を計測できていない可能性が高いので、「成果が出ていない」と決めつけず、GA4で計測した Meta 広告経由の訪問とキーイベントで効果を判断します
 
 Google広告データの source が "ga4" の場合は、GA4にリンクされたGoogle広告の費用・クリック・表示回数と、Google広告から来たセッションのキーイベント（GA4で計測した成果）です。インプレッションシェアと広告側のコンバージョン値は無いので、それらには触れません。
 
@@ -122,7 +123,8 @@ function metaDigest(m: MetaReport) {
     },
     campaigns: m.campaigns.slice(0, 15).map((c) => ({ ...c, frequency: ratio(c.impressions, c.reach) })),
     platforms: m.platforms,
-    ads: m.ads.slice(0, 15),
+    ads: m.ads.slice(0, 15).map(({ imageUrl: _img, ...a }) => a),
+    destinations: m.destinations,
     // Metaピクセルが無いとMeta側のCVは0。GA4で計測した、Meta広告から来た人の成果
     siteResultsFromGa4: m.ga4,
   };
