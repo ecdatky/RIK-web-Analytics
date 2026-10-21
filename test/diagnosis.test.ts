@@ -65,4 +65,24 @@ describe("diagnose", () => {
     const d = diagnose(r);
     expect(d.items.every((i) => i.area === "ga4")).toBe(true);
   });
+
+  it("Meta広告の行き先がPeatixなら、ピクセル未設置や成果0のキャンペーンとして扱わない", () => {
+    const r = demoReport();
+    const m = r.meta!;
+    m.totals.conversions = { current: 0, previous: 0 };
+    m.campaigns = m.campaigns.map((c) => ({ ...c, objective: "OUTCOME_LEADS", conversions: 0 }));
+    m.destinations = [
+      { host: "peatix.com", spend: 9000, clicks: 300, ads: 3, example: "https://peatix.com/event/1" },
+      { host: "rikcorp.jp", spend: 1000, clicks: 20, ads: 1, example: "https://www.rikcorp.jp/" },
+    ];
+    const items = diagnose(r).items;
+    const ids = items.map((i) => i.id);
+    expect(ids).toContain("measure-meta-offsite");
+    expect(ids).not.toContain("measure-meta-pixel");
+    expect(ids.some((id) => id.startsWith("meta-zero-"))).toBe(false);
+    expect(items.find((i) => i.id === "measure-meta-offsite")!.evidence).toContain("90.0%");
+
+    m.destinations = [{ host: "rikcorp.jp", spend: 1000, clicks: 20, ads: 1, example: "https://www.rikcorp.jp/" }];
+    expect(diagnose(r).items.map((i) => i.id)).toContain("measure-meta-pixel");
+  });
 });
