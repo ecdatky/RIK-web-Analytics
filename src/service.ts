@@ -65,7 +65,12 @@ export async function buildReport(env: Env, site: SiteConfig, range: RangeKey, c
 // ---- キャッシュ ----
 
 const reportKey = (siteId: string, range: RangeKey, compare: CompareKey) => `report:v2:${siteId}:${range}:${compare}`;
-const adviceKey = (siteId: string) => `advice:v2:${siteId}`;
+// AIのひとことは期間（range×compare）ごとに保存し、全ユーザーで共有する。
+// 生成した日（JST）が変わったら無効にし、朝の定期実行でまとめて消す
+const advicePrefix = (siteId: string) => `advice:v3:${siteId}:`;
+const adviceKey = (siteId: string, range: RangeKey, compare: CompareKey) => `${advicePrefix(siteId)}${range}:${compare}`;
+const legacyAdviceKey = (siteId: string) => `advice:v2:${siteId}`;
+const adviceJobKey = (siteId: string, range: RangeKey, compare: CompareKey) => `advice-job:v1:${siteId}:${range}:${compare}`;
 const diagKey = (siteId: string) => `diag:v1:${siteId}`;
 // KV には長めに残し、鮮度判定は fetchedAt で行う（古いデータでも即表示 → 裏で更新）
 const KV_KEEP_SECONDS = 3 * 86_400;
@@ -97,8 +102,29 @@ export function isStale(env: Env, report: SiteReport): boolean {
   return Date.now() - Date.parse(report.fetchedAt) > freshnessSeconds(env) * 1000;
 }
 
-export async function getAdvice(env: Env, siteId: string): Promise<Advice | null> {
-  return env.CACHE.get<Advice>(adviceKey(siteId), "json");
+export function adviceIsFromToday(advice: Advice | null): boolean {
+  return !!advice && todayJst(new Date(advice.generatedAt)) === todayJst();
+}
+
+/** その期間の今日のひとことを返す。前日以前に作られたものは返さない */
+export async function getAdvice(env: Env, siteId: string, range: RangeKey, compare: CompareKey): Promise<Advice | null> {
+  const advice = await env.CACHE.get<Advice>(adviceKey(siteId, range, compare), "json");
+  if (adviceIsFromToday(advice)) return advice;
+  // 期間別に保存する前（v2）のひとこと。今日・同じ期間のものだけ使う
+  const legacy = await env.CACHE.get<Advice>(legacyAdviceKey(siteId), "json");
+  return adviceIsFromToday(legacy) && legacy!.range === range && legacy!.compare === compare ? legacy : null;
+}
+
+export type AdviceStage = "data" | "thinking" | "writing" | "saving";
+export interface AdviceJob {
+  startedAt: string;
+  by: string;
+}
+
+/** 誰かが生成中なら、その情報を返す（3分以上前のものは失敗扱いで無視） */
+export async function getAdviceJob(env: Env, siteId: string, range: RangeKey, compare: CompareKey): Promise<AdviceJob | null> {
+  const job = await env.CACHE.get<AdviceJob>(adviceJobKey(siteId, range, compare), "json");
+  return job && Date.now() - Date.parse(job.startedAt) < 3 * 60_000 ? job : null;
 }
 
 export async function refreshAdvice(
@@ -106,20 +132,46 @@ export async function refreshAdvice(
   site: SiteConfig,
   range: RangeKey = "28d",
   compare: CompareKey = "prev",
+  opts: { by?: string; onProgress?: (stage: AdviceStage, pct: number) => void } = {},
 ): Promise<Advice> {
-  let advice: Advice;
-  if (isDemo(env) && !env.ANTHROPIC_API_KEY) {
-    advice = demoAdvice(site, range, compare);
-  } else {
-    const report = (await getCachedReport(env, site.id, range, compare)) ?? (await refreshReport(env, site, range, compare));
-    advice = await generateAdvice(env, site, report);
+  const progress = opts.onProgress ?? (() => undefined);
+  const jobKey = adviceJobKey(site.id, range, compare);
+  const job: AdviceJob = { startedAt: new Date().toISOString(), by: opts.by ?? "自動生成" };
+  await env.CACHE.put(jobKey, JSON.stringify(job), { expirationTtl: 300 });
+  try {
+    let advice: Advice;
+    progress("data", 5);
+    if (isDemo(env) && !env.ANTHROPIC_API_KEY) {
+      advice = demoAdvice(site, range, compare);
+    } else {
+      const report = (await getCachedReport(env, site.id, range, compare)) ?? (await refreshReport(env, site, range, compare));
+      progress("thinking", 15);
+      advice = await generateAdvice(env, site, report, (chars) =>
+        progress("writing", Math.min(95, 20 + Math.round((chars / EXPECTED_ADVICE_CHARS) * 75))),
+      );
+    }
+    progress("saving", 97);
+    await env.CACHE.put(adviceKey(site.id, range, compare), JSON.stringify(advice), {
+      expirationTtl: 2 * 86_400,
+      metadata: { day: todayJst(new Date(advice.generatedAt)) },
+    });
+    return advice;
+  } finally {
+    await env.CACHE.delete(jobKey).catch(() => undefined);
   }
-  await env.CACHE.put(adviceKey(site.id), JSON.stringify(advice), { expirationTtl: 14 * 86_400 });
-  return advice;
 }
 
-export function adviceIsFromToday(advice: Advice | null): boolean {
-  return !!advice && todayJst(new Date(advice.generatedAt)) === todayJst();
+// 出力の文字数の目安（進み具合の表示に使うだけ。超えても95%で止まる）
+const EXPECTED_ADVICE_CHARS = 6000;
+
+/** 生成した日が今日でないひとことを消す（朝の定期実行で呼ぶ） */
+export async function purgeOldAdvice(env: Env, siteId: string): Promise<number> {
+  const today = todayJst();
+  const { keys } = await env.CACHE.list<{ day?: string }>({ prefix: advicePrefix(siteId) });
+  const old = keys.filter((k) => k.metadata?.day !== today);
+  await Promise.all(old.map((k) => env.CACHE.delete(k.name)));
+  await env.CACHE.delete(legacyAdviceKey(siteId));
+  return old.length;
 }
 
 // ---- 診断 ----

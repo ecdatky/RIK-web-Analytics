@@ -64,4 +64,70 @@ describe("fetchAds", () => {
     expect(calls[0].url).toContain("/customers/1234567890/googleAds:searchStream");
     expect(calls[0].headers["login-customer-id"]).toBe("1112223333");
   });
+
+  it("広告の見出し・画像をキャンペーン別に取り、P-MAXはアセットグループ単位にする", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        if (url.includes("oauth2")) return Response.json({ access_token: "tok", expires_in: 3600 });
+        const query = JSON.parse(String(init.body)).query as string;
+        if (query.includes("FROM ad_group_ad")) {
+          return Response.json([
+            {
+              results: [
+                {
+                  campaign: { name: "検索" },
+                  adGroup: { name: "デッキ" },
+                  adGroupAd: {
+                    ad: {
+                      type: "RESPONSIVE_SEARCH_AD",
+                      finalUrls: ["https://products.rikcorp.jp/"],
+                      responsiveSearchAd: { headlines: [{ text: "人工木デッキ" }, { text: "無料カタログ" }], descriptions: [{ text: "説明" }] },
+                    },
+                  },
+                  metrics: { costMicros: "4000000", clicks: "8", impressions: "80", conversions: 1 },
+                },
+                {
+                  campaign: { name: "ディスプレイ" },
+                  adGroup: { name: "リマケ" },
+                  adGroupAd: {
+                    ad: { type: "RESPONSIVE_DISPLAY_AD", responsiveDisplayAd: { headlines: [{ text: "庭づくり" }], marketingImages: [{ asset: "customers/1/assets/9" }] } },
+                  },
+                  metrics: { costMicros: "1000000", clicks: "1", impressions: "50", conversions: 0 },
+                },
+              ],
+            },
+          ]);
+        }
+        if (query.includes("FROM asset_group_asset")) {
+          return Response.json([
+            {
+              results: [
+                { assetGroup: { resourceName: "ag/1" }, assetGroupAsset: { fieldType: "HEADLINE" }, asset: { textAsset: { text: "P-MAX見出し" } } },
+                { assetGroup: { resourceName: "ag/1" }, assetGroupAsset: { fieldType: "MARKETING_IMAGE" }, asset: { imageAsset: { fullSize: { url: "https://img/pmax.jpg" } } } },
+              ],
+            },
+          ]);
+        }
+        if (query.includes("FROM asset_group")) {
+          return Response.json([
+            { results: [{ campaign: { name: "P-MAX" }, assetGroup: { resourceName: "ag/1", name: "全製品" }, metrics: { costMicros: "6000000", clicks: "6", impressions: "300", conversions: 2 } }] },
+          ]);
+        }
+        if (query.includes("FROM asset WHERE")) {
+          expect(query).toContain("'customers/1/assets/9'");
+          return Response.json([{ results: [{ asset: { resourceName: "customers/1/assets/9", imageAsset: { fullSize: { url: "https://img/display.jpg" } } } }] }]);
+        }
+        return Response.json([{ results: [] }]);
+      }),
+    );
+
+    const r = await fetchAds(env, ["123"], { startDate: "2026-10-10", endDate: "2026-10-16" }, { startDate: "2026-10-03", endDate: "2026-10-09" });
+
+    expect(r.ads?.map((a) => a.campaign)).toEqual(["P-MAX", "検索", "ディスプレイ"]);
+    expect(r.ads?.[0]).toMatchObject({ type: "ASSET_GROUP", adGroup: "全製品", headlines: ["P-MAX見出し"], imageUrl: "https://img/pmax.jpg", cost: 6 });
+    expect(r.ads?.[1]).toMatchObject({ headlines: ["人工木デッキ", "無料カタログ"], descriptions: ["説明"], finalUrl: "https://products.rikcorp.jp/", cost: 4 });
+    expect(r.ads?.[1].imageUrl).toBeUndefined();
+    expect(r.ads?.[2].imageUrl).toBe("https://img/display.jpg");
+  });
 });
