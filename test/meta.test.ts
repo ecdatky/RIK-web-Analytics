@@ -65,11 +65,15 @@ describe("fetchMeta", () => {
     expect(r.platforms).toEqual([{ platform: "instagram", spend: 360, impressions: 1200, clicks: 16, conversions: 4 }]);
     expect(r.ads[0]).toMatchObject({ name: "A", conversions: 0 });
     expect(r.conversionActions).toEqual(["lead"]);
-    expect(urls[0].pathname).toBe("/v24.0/act_123/insights");
+    expect(urls.some((u) => u.pathname === "/v24.0/act_123/insights")).toBe(true);
     expect(urls.some((u) => u.pathname === "/v24.0/act_456/insights")).toBe(true);
     // HMAC-SHA256("tok", key="secret")
+    expect(urls.every((u) => /^[0-9a-f]{64}$/.test(u.searchParams.get("appsecret_proof") ?? ""))).toBe(true);
     expect(urls[0].searchParams.get("appsecret_proof")).toMatch(/^[0-9a-f]{64}$/);
-    expect(JSON.parse(urls[0].searchParams.get("time_range")!)).toEqual({ since: "2026-10-15", until: "2026-10-16" });
+    // 今期間と前期間は並列で取るので、順番に依存せずに両方の期間が指定されていることを見る
+    const ranges = urls.map((u) => u.searchParams.get("time_range")).filter(Boolean).map((t) => JSON.parse(t!));
+    expect(ranges).toContainEqual({ since: "2026-10-15", until: "2026-10-16" });
+    expect(ranges).toContainEqual({ since: "2026-10-13", until: "2026-10-14" });
   });
 
   it("APIエラーはアカウントIDとメッセージ付きで投げる", async () => {
