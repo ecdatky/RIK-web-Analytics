@@ -60,6 +60,23 @@ function adviceStream(env: Env, ctx: ExecutionContext, site: SiteConfig, range: 
   });
 }
 
+// Google広告の画像（googlesyndication など）は広告ブロッカーや社内のフィルタで読めないことがあるので、Worker 経由で返す
+const IMAGE_HOSTS = [/^tpc\.googlesyndication\.com$/, /\.googleusercontent\.com$/, /^[a-z0-9-]+\.gstatic\.com$/];
+
+async function proxyImage(target: string | null): Promise<Response> {
+  let u: URL;
+  try {
+    u = new URL(target ?? "");
+  } catch {
+    return json({ error: "u が不正です" }, 400);
+  }
+  if (u.protocol !== "https:" || !IMAGE_HOSTS.some((h) => h.test(u.hostname))) return json({ error: "このURLは表示できません" }, 400);
+  const res = await fetch(u.toString(), { cf: { cacheTtl: 86400, cacheEverything: true } });
+  const type = res.headers.get("content-type") ?? "";
+  if (!res.ok || !type.startsWith("image/")) return new Response(null, { status: 502 });
+  return new Response(res.body, { headers: { "content-type": type, "cache-control": "private, max-age=86400" } });
+}
+
 async function handleApi(request: Request, env: Env, ctx: ExecutionContext, url: URL, email: string): Promise<Response> {
   const sites = loadSites(env);
   const siteId = url.searchParams.get("site");
@@ -121,6 +138,9 @@ async function handleApi(request: Request, env: Env, ctx: ExecutionContext, url:
       const [advice, job] = await Promise.all([getAdvice(env, site.id, range, compare), getAdviceJob(env, site.id, range, compare)]);
       return json({ advice, job });
     }
+
+    case "/api/image":
+      return proxyImage(url.searchParams.get("u"));
 
     case "/api/diagnosis": {
       if (!site) return json({ error: "site が不正です" }, 400);
