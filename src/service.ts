@@ -53,7 +53,12 @@ export async function buildReport(env: Env, site: SiteConfig, range: RangeKey, c
       ),
     hasGoogleAds(site) &&
       (site.adsCustomerIds?.length
-        ? fetchAds(env, site.adsCustomerIds, current, previous)
+        ? fetchAds(env, site.adsCustomerIds, current, previous).catch((e) => {
+            // API がまだ使えない間（権限の付与待ちなど）は、GA4 経由の数字で代わりに出す
+            if (!site.googleAdsViaGa4 || !site.ga4PropertyId) throw e;
+            console.error("google ads api, falling back to ga4", site.id, errMsg(e));
+            return fetchAdsViaGa4(env, site.ga4PropertyId, current, previous);
+          })
         : fetchAdsViaGa4(env, site.ga4PropertyId!, current, previous)
       ).then(
         (a) => (report.ads = a),
