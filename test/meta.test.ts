@@ -40,14 +40,11 @@ describe("fetchMeta", () => {
         if (p.get("level") === "campaign") {
           return Response.json({ data: [{ campaign_id: "1", campaign_name: "C", objective: "OUTCOME_LEADS", spend: "300", impressions: "1000", reach: "400", inline_link_clicks: "12", actions }] });
         }
-        if (p.get("fields") === "creative") {
-          return Response.json(Object.fromEntries(p.get("ids")!.split(",").map((id) => [id, { id, creative: { id: "cr1" } }])));
-        }
         if (p.get("ids")) {
+          expect(p.get("fields")).toMatch(/^creative\{/);
           expect(p.get("thumbnail_width")).toBe("600");
-          return Response.json({
-            cr1: { id: "cr1", thumbnail_url: "https://thumb.example/cr1.jpg", object_story_spec: { link_data: { link: "https://www.peatix.com/event/123?utm_source=meta" } } },
-          });
+          const creative = { id: "cr1", thumbnail_url: "https://thumb.example/cr1.jpg", object_story_spec: { link_data: { link: "https://www.peatix.com/event/123?utm_source=meta" } } };
+          return Response.json(Object.fromEntries(p.get("ids")!.split(",").map((id) => [id, { id, creative }])));
         }
         if (p.get("level") === "ad") {
           return Response.json({ data: [{ ad_id: "ad1", ad_name: "A", campaign_name: "C", spend: "50", impressions: "200", reach: "100", inline_link_clicks: "3" }] });
@@ -87,12 +84,13 @@ describe("fetchMeta", () => {
     expect(ranges).toContainEqual({ since: "2026-10-13", until: "2026-10-14" });
   });
 
-  it("広告画像が取れなくても、レポートはそのまま返す", async () => {
+  it("広告画像が取れなくても、レポートはそのまま返し、理由を残す", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: string) => {
-        const p = new URL(input).searchParams;
-        if (p.get("ids")) return Response.json({ error: { message: "permission" } }, { status: 403 });
+        const url = new URL(input);
+        const p = url.searchParams;
+        if (p.get("ids") || url.pathname.endsWith("/ad1")) return Response.json({ error: { message: "permission" } }, { status: 403 });
         if (p.get("level") === "ad") return Response.json({ data: [{ ad_id: "ad1", ad_name: "A", campaign_name: "C", spend: "50" }] });
         return Response.json({ data: [] });
       }),
@@ -102,6 +100,31 @@ describe("fetchMeta", () => {
     const r = await fetchMeta(env, ["1"], { startDate: "2026-10-15", endDate: "2026-10-16" }, { startDate: "2026-10-13", endDate: "2026-10-14" });
     expect(r.ads).toHaveLength(1);
     expect(r.ads[0].imageUrl).toBeUndefined();
+    expect(r.creativeError).toContain("permission");
+  });
+
+  it("まとめて取れないときは広告ごとに取り直し、だめなら画像だけを取る", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        const url = new URL(input);
+        const p = url.searchParams;
+        if (p.get("ids")) return Response.json({ error: { message: "one ad is not visible" } }, { status: 400 });
+        if (url.pathname.endsWith("/ad1")) return Response.json({ id: "ad1", creative: { image_url: "https://img.example/1.jpg" } });
+        if (url.pathname.endsWith("/ad2")) {
+          if (p.get("fields")!.includes("object_story_spec")) return Response.json({ error: { message: "field" } }, { status: 400 });
+          return Response.json({ id: "ad2", creative: { thumbnail_url: "https://img.example/2.jpg" } });
+        }
+        if (url.pathname.endsWith("/ad3")) return Response.json({ error: { message: "nope" } }, { status: 400 });
+        if (p.get("level") === "ad")
+          return Response.json({ data: ["ad1", "ad2", "ad3"].map((id, i) => ({ ad_id: id, ad_name: id, campaign_name: "C", spend: String(30 - i) })) });
+        return Response.json({ data: [] });
+      }),
+    );
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const r = await fetchMeta({ META_ACCESS_TOKEN: "tok" } as Env, ["1"], { startDate: "2026-10-15", endDate: "2026-10-16" }, { startDate: "2026-10-13", endDate: "2026-10-14" });
+    expect(r.ads.map((a) => a.imageUrl)).toEqual(["https://img.example/1.jpg", "https://img.example/2.jpg", undefined]);
+    expect(r.creativeError).toBeUndefined();
   });
 
   it("APIエラーはアカウントIDとメッセージ付きで投げる", async () => {
