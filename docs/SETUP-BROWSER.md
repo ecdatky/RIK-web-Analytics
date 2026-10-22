@@ -68,7 +68,6 @@ GitHub が Cloudflare にデプロイするための鍵です。
 |---|---|---|
 | `SITES_JSON` | サイト設定のJSON（下の例） | — |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | サービスアカウントのJSONファイルの中身すべて | SETUP.md 手順4 |
-| `GOOGLE_ADS_DEVELOPER_TOKEN` | 開発者トークン | SETUP.md 手順5 |
 | `GOOGLE_ADS_CLIENT_ID` | OAuth クライアントID | SETUP.md 手順5 |
 | `GOOGLE_ADS_CLIENT_SECRET` | OAuth クライアントシークレット | SETUP.md 手順5 |
 | `GOOGLE_ADS_REFRESH_TOKEN` | リフレッシュトークン | SETUP.md 手順5 |
