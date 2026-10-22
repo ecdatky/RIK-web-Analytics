@@ -25,6 +25,11 @@ export function loadSites(env: Env): SiteConfig[] {
   return parsed;
 }
 
+/** RIKCADのお知らせ画面はRIKシェアのRSSを読むので、RIKシェアのサイトだけ rss 流入を「RIKCADお知らせ」と表示する */
+export function hasRikcadNews(site: SiteConfig): boolean {
+  return site.rikcadNews ?? /rik-support\.net\/share/.test(site.url ?? "");
+}
+
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** GA4・Google広告・Meta広告を並列で取りに行く。どれかが失敗しても残りは表示する */
@@ -42,7 +47,7 @@ export async function buildReport(env: Env, site: SiteConfig, range: RangeKey, c
 
   await Promise.all([
     site.ga4PropertyId &&
-      fetchGa4(env, site.ga4PropertyId, current, previous).then(
+      fetchGa4(env, site.ga4PropertyId, current, previous, { rikcadNews: hasRikcadNews(site) }).then(
         (g) => (report.ga4 = g),
         (e) => (report.ga4Error = errMsg(e)),
       ),

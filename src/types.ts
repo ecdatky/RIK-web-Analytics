@@ -37,6 +37,8 @@ export interface SiteConfig {
   metaAdAccountIds?: string[];
   /** Meta広告でCVとして数える action_type。既定は ["lead"] */
   metaConversionActions?: string[];
+  /** RIKCADのお知らせ(RSS)の流入を「RIKCADお知らせ」と表示する。未指定なら URL が rik-support.net/share のサイトで有効 */
+  rikcadNews?: boolean;
   /** AIアドバイスに渡すサイトの目的・KPIなど（任意） */
   goal?: string;
 }

@@ -53,7 +53,33 @@ function dailySeries(report: Report, range: DateRange) {
   });
 }
 
-export async function fetchGa4(env: Env, propertyId: string, current: DateRange, previous: DateRange): Promise<Ga4Report> {
+/** RIKCAD起動時の「お知らせ」(NewsViewer.exe) が開く記事リンクには WordPress が utm_medium=rss を付ける */
+export const RIKCAD_NEWS_LABEL = "RIKCADお知らせ";
+
+/** チャネル × メディアの行を集計する。rikcadNews のときは medium=rss を「RIKCADお知らせ」として別チャネルに分ける */
+export function groupChannels(rows: Row[], rikcadNews: boolean): Ga4Report["channels"] {
+  const acc = new Map<string, { sessions: number; engaged: number; keyEvents: number }>();
+  for (const r of rows) {
+    const channel = rikcadNews && dim(r, 1) === "rss" ? RIKCAD_NEWS_LABEL : dim(r, 0);
+    const a = acc.get(channel) ?? { sessions: 0, engaged: 0, keyEvents: 0 };
+    a.sessions += num(r, 0);
+    a.engaged += num(r, 1);
+    a.keyEvents += num(r, 2);
+    acc.set(channel, a);
+  }
+  return [...acc]
+    .map(([channel, a]) => ({ channel, sessions: a.sessions, engagementRate: a.sessions ? a.engaged / a.sessions : 0, keyEvents: a.keyEvents }))
+    .sort((x, y) => y.sessions - x.sessions)
+    .slice(0, 10);
+}
+
+export async function fetchGa4(
+  env: Env,
+  propertyId: string,
+  current: DateRange,
+  previous: DateRange,
+  opts: { rikcadNews?: boolean } = {},
+): Promise<Ga4Report> {
   const property = `properties/${propertyId}`;
   const today = todayJst();
   const cur = [{ ...current, name: "current" }];
@@ -71,10 +97,10 @@ export async function fetchGa4(env: Env, propertyId: string, current: DateRange,
         },
         {
           dateRanges: cur,
-          dimensions: [d("sessionDefaultChannelGroup")],
-          metrics: [m("sessions"), m("engagementRate"), m("keyEvents")],
+          dimensions: [d("sessionDefaultChannelGroup"), d("sessionMedium")],
+          metrics: [m("sessions"), m("engagedSessions"), m("keyEvents")],
           orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
-          limit: 10,
+          limit: 500,
         },
         {
           dateRanges: cur,
@@ -133,12 +159,7 @@ export async function fetchGa4(env: Env, propertyId: string, current: DateRange,
     totals,
     daily: dailySeries(dailyR, current),
     dailyPrevious: dailySeries(dailyPrevR, previous),
-    channels: (channelR.rows ?? []).map((r) => ({
-      channel: dim(r, 0),
-      sessions: num(r, 0),
-      engagementRate: num(r, 1),
-      keyEvents: num(r, 2),
-    })),
+    channels: groupChannels(channelR.rows ?? [], !!opts.rikcadNews),
     devices: (deviceR.rows ?? []).map((r) => ({ device: dim(r, 0), sessions: num(r, 0) })),
     topPages: (pagesR.rows ?? []).map((r) => ({
       path: dim(r, 0),
@@ -153,7 +174,11 @@ export async function fetchGa4(env: Env, propertyId: string, current: DateRange,
       engagementRate: num(r, 1),
       keyEvents: num(r, 2),
     })),
-    sourceMedium: (smR.rows ?? []).map((r) => ({ sourceMedium: dim(r, 0), sessions: num(r, 0), keyEvents: num(r, 1) })),
+    sourceMedium: (smR.rows ?? []).map((r) => {
+      const sm = dim(r, 0);
+      const label = opts.rikcadNews && sm === "rss / rss" ? `${RIKCAD_NEWS_LABEL}（${sm}）` : sm;
+      return { sourceMedium: label, sessions: num(r, 0), keyEvents: num(r, 1) };
+    }),
     today: {
       activeUsers: todayRow ? num(todayRow, 0) : 0,
       sessions: todayRow ? num(todayRow, 1) : 0,
