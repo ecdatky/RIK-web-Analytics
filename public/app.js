@@ -1210,6 +1210,7 @@ function renderMeta(m) {
 
   <div class="card"><h3>配信した広告（キャンペーン別・費用順）</h3>
     <p class="muted small">費用の多い広告から最大20件。画像は動画やカルーセル広告の場合サムネイルです。</p>
+    ${m.creativeError ? `<p class="muted small">広告画像をMetaから取得できませんでした（${esc(m.creativeError)}）</p>` : ""}
     ${metaAdGallery(m.ads, avgCpa)}
   </div>
   </section>`;

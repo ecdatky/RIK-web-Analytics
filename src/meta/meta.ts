@@ -60,33 +60,56 @@ export function creativeLink(c: CreativeRow | undefined): string | undefined {
   );
 }
 
+const CREATIVE_FIELDS = "image_url,thumbnail_url,link_url,object_url,object_story_spec,asset_feed_spec{link_urls}";
+const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+function creativeInfo(c: CreativeRow | undefined): { imageUrl?: string; link?: string } | undefined {
+  const imageUrl = c?.image_url || c?.thumbnail_url;
+  const link = creativeLink(c);
+  return imageUrl || link ? { ...(imageUrl && { imageUrl }), ...(link && { link }) } : undefined;
+}
+
 /**
- * 広告IDから画像URLとリンク先を引く（広告 → クリエイティブの2段階）。
- * 画像広告は image_url、動画・カルーセルなどは thumbnail_url を使う。付加情報なので、失敗しても空で返す
+ * 広告IDから画像URLとリンク先を引く（広告のクリエイティブを展開して1回で取る）。
+ * 画像広告は image_url、動画・カルーセルなどは thumbnail_url を使う。
+ * まとめて取れないときは広告ごとに取り直し、それでもだめなら画像だけを取りにいく。
+ * 付加情報なので、失敗しても空で返し、理由を error に入れる
  */
-export async function fetchAdCreatives(env: Env, adIds: string[]): Promise<Map<string, { imageUrl?: string; link?: string }>> {
-  const out = new Map<string, { imageUrl?: string; link?: string }>();
-  if (!adIds.length) return out;
+export async function fetchAdCreatives(
+  env: Env,
+  adIds: string[],
+): Promise<{ creatives: Map<string, { imageUrl?: string; link?: string }>; error?: string }> {
+  const creatives = new Map<string, { imageUrl?: string; link?: string }>();
+  if (!adIds.length) return { creatives };
+  const size = { thumbnail_width: "600", thumbnail_height: "600" };
   try {
-    const ads = (await graphGet(env, "", { ids: adIds.join(","), fields: "creative" })) as Record<string, { creative?: { id?: string } }>;
-    const creativeOf = new Map(Object.entries(ads).flatMap(([adId, a]) => (a?.creative?.id ? [[adId, a.creative.id] as const] : [])));
-    if (!creativeOf.size) return out;
-    const creatives = (await graphGet(env, "", {
-      ids: [...new Set(creativeOf.values())].join(","),
-      fields: "image_url,thumbnail_url,link_url,object_url,object_story_spec,asset_feed_spec{link_urls}",
-      thumbnail_width: "600",
-      thumbnail_height: "600",
-    })) as Record<string, CreativeRow>;
-    for (const [adId, creativeId] of creativeOf) {
-      const c = creatives[creativeId];
-      const imageUrl = c?.image_url || c?.thumbnail_url;
-      const link = creativeLink(c);
-      if (imageUrl || link) out.set(adId, { ...(imageUrl && { imageUrl }), ...(link && { link }) });
+    const ads = (await graphGet(env, "", { ids: adIds.join(","), fields: `creative{${CREATIVE_FIELDS}}`, ...size })) as Record<string, { creative?: CreativeRow }>;
+    for (const [adId, a] of Object.entries(ads)) {
+      const info = creativeInfo(a?.creative);
+      if (info) creatives.set(adId, info);
     }
+    return { creatives };
   } catch (e) {
-    console.error("meta ad creatives", e);
+    console.error("meta ad creatives (batch)", errText(e));
   }
-  return out;
+  // 1件でも見られない広告があると、まとめての取得は全体が失敗するので広告ごとに取る
+  const errors: string[] = [];
+  await Promise.all(
+    adIds.map(async (adId) => {
+      for (const fields of [CREATIVE_FIELDS, "thumbnail_url,image_url"]) {
+        try {
+          const a = (await graphGet(env, adId, { fields: `creative{${fields}}`, ...size })) as { creative?: CreativeRow };
+          const info = creativeInfo(a.creative);
+          if (info) creatives.set(adId, info);
+          return;
+        } catch (e) {
+          errors.push(errText(e));
+        }
+      }
+    }),
+  );
+  if (errors.length) console.error("meta ad creatives", errors[0]);
+  return { creatives, ...(!creatives.size && errors.length && { error: errors[0] }) };
 }
 
 const hostOf = (url: string) => {
@@ -224,7 +247,7 @@ export async function fetchMeta(
     )
     .sort((x, y) => y.spend - x.spend)
     .slice(0, 20);
-  const creatives = await fetchAdCreatives(env, topAds.map((a) => a.id).filter(Boolean));
+  const { creatives, error: creativeError } = await fetchAdCreatives(env, topAds.map((a) => a.id).filter(Boolean));
   const ads: MetaAd[] = topAds.map((a) => ({ ...a, ...creatives.get(a.id) }));
 
   return {
@@ -243,5 +266,6 @@ export async function fetchMeta(
     platforms: [...platformMap.values()].sort((x, y) => y.spend - x.spend),
     ads,
     destinations: destinationsOf(ads),
+    ...(creativeError && { creativeError }),
   };
 }

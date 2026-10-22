@@ -198,6 +198,8 @@ export interface MetaReport {
   ads: MetaAd[];
   /** 広告のリンク先ドメイン別の費用（費用の多い広告から最大20件分）。旧データには無い */
   destinations?: MetaDestination[];
+  /** 広告画像・リンク先が1件も取れなかったときの理由 */
+  creativeError?: string;
   /** Meta広告から来た訪問の、サイトでの成果（GA4で計測）。Metaピクセルが無くても分かる */
   ga4?: MetaGa4Results;
 }
