@@ -75,13 +75,15 @@ Worker 側でも Access の署名付きトークン（`Cf-Access-Jwt-Assertion`�
 ## 5. Google広告 API の準備
 
 1. 開発者トークンは不要です（2026年9月に廃止され、利用権限は Google Cloud プロジェクト単位になりました）。本番アカウントのデータを取るには、Google Cloud コンソールでそのプロジェクトに Explorer 以上のアクセスレベルを付けます
-2. 手順4と同じ GCP プロジェクトで **Google Ads API** を有効化
-3. 「認証情報」→ OAuth クライアントID を作成（種類: ウェブアプリケーション、リダイレクトURI に `https://developers.google.com/oauthplayground` を追加）
-4. [OAuth 2.0 Playground](https://developers.google.com/oauthplayground) を開き、歯車から「Use your own OAuth credentials」に手順3の ID / シークレットを入力
+2. 手順4と同じ GCP プロジェクトで **Google Ads API** を有効化し、「アクセスレベル → 管理」から Explorer を申請
+3. **おすすめ（OAuth 不要）**: Google広告の MCC の「管理 → アクセスとセキュリティ」で、手順4のサービスアカウントのメールアドレスを「閲覧のみ」のユーザーとして追加する。OAuth の CLIENT_ID / SECRET / REFRESH_TOKEN を登録しなければ、このサービスアカウントで Google広告 API を呼びます
+   - 下の OAuth の手順（4〜5）は、サービスアカウントを使わない場合だけ必要です
+4. 「認証情報」→ OAuth クライアントID を作成（種類: ウェブアプリケーション、リダイレクトURI に `https://developers.google.com/oauthplayground` を追加）
+5. [OAuth 2.0 Playground](https://developers.google.com/oauthplayground) を開き、歯車から「Use your own OAuth credentials」に手順4の ID / シークレットを入力
    - スコープ `https://www.googleapis.com/auth/adwords` を入力して認可（MCC にアクセスできる社内アカウントでログイン）
    - 「Exchange authorization code for tokens」で **リフレッシュトークン** を取得
    - OAuth 同意画面が「テスト」状態だとリフレッシュトークンが7日で失効します。「本番」にするか、Google Workspace の内部アプリにしてください
-5. MCC の顧客ID（`123-456-7890` 形式）と、各広告アカウント（3つ）の顧客IDを控える
+6. MCC の顧客ID（`123-456-7890` 形式）と、各広告アカウント（3つ）の顧客IDを控える
 
 ## 5-2. Meta広告 API の準備
 

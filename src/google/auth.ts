@@ -2,6 +2,7 @@ import { importPKCS8, SignJWT } from "jose";
 import type { Env } from "../types";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
+const ADS_SCOPE = "https://www.googleapis.com/auth/adwords";
 
 // isolate 内で使い回すアクセストークン（期限の1分前まで有効とみなす）
 const tokenCache = new Map<string, { token: string; expiresAt: number }>();
@@ -45,11 +46,16 @@ export function serviceAccountToken(env: Env, scope: string): Promise<string> {
   });
 }
 
-/** Google広告 API 用: OAuth リフレッシュトークンからアクセストークンを得る */
+/**
+ * Google広告 API 用のアクセストークン。
+ * OAuth のリフレッシュトークンがあればそれを使い、無ければ GA4 と同じサービスアカウントで取る
+ * （サービスアカウントのメールアドレスを Google広告のアカウントにユーザーとして追加しておく）
+ */
 export function adsOAuthToken(env: Env): Promise<string> {
   const { GOOGLE_ADS_CLIENT_ID, GOOGLE_ADS_CLIENT_SECRET, GOOGLE_ADS_REFRESH_TOKEN } = env;
   if (!GOOGLE_ADS_CLIENT_ID || !GOOGLE_ADS_CLIENT_SECRET || !GOOGLE_ADS_REFRESH_TOKEN) {
-    throw new Error("Google広告のOAuth認証情報（CLIENT_ID / CLIENT_SECRET / REFRESH_TOKEN）が未設定です");
+    if (env.GOOGLE_SERVICE_ACCOUNT_JSON) return serviceAccountToken(env, ADS_SCOPE);
+    throw new Error("Google広告の認証情報（サービスアカウント、または OAuth の CLIENT_ID / CLIENT_SECRET / REFRESH_TOKEN）が未設定です");
   }
   return cached(`ads:${GOOGLE_ADS_CLIENT_ID}`, () =>
     exchange(
