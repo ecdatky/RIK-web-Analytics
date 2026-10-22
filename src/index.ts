@@ -152,8 +152,10 @@ export default {
     const sites = loadSites(env);
     // 07:00 JST の実行では前日までのAIのひとことを消し、28日・直前比のものを作り直す
     const morning = event.cron === "0 22 * * *";
+    // Google広告APIは Explorer 権限だと1日2,880回まで。広告アカウントを直接読むサイトの先読みは1時間おきにする
+    const halfHour = new Date(event.scheduledTime).getUTCMinutes() >= 30;
     for (const site of sites) {
-      for (const range of WARM_RANGES) {
+      for (const range of halfHour && site.adsCustomerIds?.length ? [] : WARM_RANGES) {
         ctx.waitUntil(refreshReport(env, site, range, "prev").catch((e) => console.error(site.id, range, e)));
       }
       if (morning) {
