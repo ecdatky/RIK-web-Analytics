@@ -11,14 +11,14 @@ type GaqlRow = Record<string, Record<string, unknown> | undefined>;
 const clean = (id: string) => id.replace(/-/g, "");
 
 async function gaql(env: Env, customerId: string, query: string): Promise<GaqlRow[]> {
-  if (!env.GOOGLE_ADS_DEVELOPER_TOKEN) throw new Error("GOOGLE_ADS_DEVELOPER_TOKEN が未設定です");
   const token = await adsOAuthToken(env);
   const version = env.GOOGLE_ADS_API_VERSION || DEFAULT_VERSION;
   const headers: Record<string, string> = {
     authorization: `Bearer ${token}`,
-    "developer-token": env.GOOGLE_ADS_DEVELOPER_TOKEN,
     "content-type": "application/json",
   };
+  // 2026年9月から利用権限は Google Cloud プロジェクト単位になり、開発者トークンは不要（設定されていれば従来どおり送る）
+  if (env.GOOGLE_ADS_DEVELOPER_TOKEN) headers["developer-token"] = env.GOOGLE_ADS_DEVELOPER_TOKEN;
   if (env.GOOGLE_ADS_LOGIN_CUSTOMER_ID) headers["login-customer-id"] = clean(env.GOOGLE_ADS_LOGIN_CUSTOMER_ID);
 
   const res = await fetch(`https://googleads.googleapis.com/${version}/customers/${clean(customerId)}/googleAds:searchStream`, {

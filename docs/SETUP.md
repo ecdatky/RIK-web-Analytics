@@ -74,8 +74,7 @@ Worker 側でも Access の署名付きトークン（`Cf-Access-Jwt-Assertion`�
 
 ## 5. Google広告 API の準備
 
-1. MCC（クライアントセンター）アカウントで 管理 → API センター → **開発者トークン** を申請
-   - 申請直後のトークンはテストアカウントにしか使えません。本番アカウントのデータを取るには「ベーシックアクセス」の承認が必要です（審査に数日かかることがあります）
+1. 開発者トークンは不要です（2026年9月に廃止され、利用権限は Google Cloud プロジェクト単位になりました）。本番アカウントのデータを取るには、Google Cloud コンソールでそのプロジェクトに Explorer 以上のアクセスレベルを付けます
 2. 手順4と同じ GCP プロジェクトで **Google Ads API** を有効化
 3. 「認証情報」→ OAuth クライアントID を作成（種類: ウェブアプリケーション、リダイレクトURI に `https://developers.google.com/oauthplayground` を追加）
 4. [OAuth 2.0 Playground](https://developers.google.com/oauthplayground) を開き、歯車から「Use your own OAuth credentials」に手順3の ID / シークレットを入力
@@ -127,7 +126,6 @@ Facebook・Instagram 広告のデータは Meta Marketing API（Insights API）�
 ```bash
 npx wrangler secret put SITES_JSON                     # 上のJSONを貼り付け
 npx wrangler secret put GOOGLE_SERVICE_ACCOUNT_JSON    # 手順4のJSONファイルの中身
-npx wrangler secret put GOOGLE_ADS_DEVELOPER_TOKEN
 npx wrangler secret put GOOGLE_ADS_CLIENT_ID
 npx wrangler secret put GOOGLE_ADS_CLIENT_SECRET
 npx wrangler secret put GOOGLE_ADS_REFRESH_TOKEN
