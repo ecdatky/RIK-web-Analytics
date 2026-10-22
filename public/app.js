@@ -1006,7 +1006,7 @@ function googleAdGallery(ads, avgCpa) {
   if (!ads.length) return `<p class="muted">データなし</p>`;
   return adGroups(ads, (x) => {
     const img = x.imageUrl
-      ? `<div class="adg-img"><img src="${esc(x.imageUrl)}" alt="${esc(x.headlines[0] ?? x.adGroup)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentElement.classList.add('adg-noimg');this.remove()"><span class="adg-fallback">画像なし</span></div>`
+      ? `<div class="adg-img"><img src="/api/image?u=${encodeURIComponent(x.imageUrl)}" alt="${esc(x.headlines[0] ?? x.adGroup)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentElement.classList.add('adg-noimg');this.remove()"><span class="adg-fallback">画像なし</span></div>`
       : `<div class="adg-img adg-text"><div class="serp">
           <span class="serp-url"><b>スポンサー</b>${esc(hostOf(x.finalUrl))}</span>
           <span class="serp-title">${esc(x.headlines.slice(0, 3).join(" | ") || "（見出しなし）")}</span>
