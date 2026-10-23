@@ -127,6 +127,44 @@ describe("fetchMeta", () => {
     expect(r.creativeError).toBeUndefined();
   });
 
+  it("投稿を宣伝する広告は、投稿の側からリンク先を取る", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        const p = new URL(input).searchParams;
+        if (p.get("ids") === "ad1") return Response.json({ ad1: { id: "ad1", creative: { thumbnail_url: "https://img.example/1.jpg", effective_object_story_id: "page_post" } } });
+        if (p.get("ids") === "page_post") {
+          expect(p.get("fields")).toContain("attachments");
+          return Response.json({ page_post: { attachments: { data: [{ unshimmed_url: "https://riksquare2026.peatix.com/?utm_source=meta_ad" }] } } });
+        }
+        if (p.get("level") === "ad") return Response.json({ data: [{ ad_id: "ad1", ad_name: "A", campaign_name: "C", spend: "50", inline_link_clicks: "3" }] });
+        return Response.json({ data: [] });
+      }),
+    );
+    const r = await fetchMeta({ META_ACCESS_TOKEN: "tok" } as Env, ["1"], { startDate: "2026-10-15", endDate: "2026-10-16" }, { startDate: "2026-10-13", endDate: "2026-10-14" });
+    expect(r.ads[0].link).toBe("https://riksquare2026.peatix.com/?utm_source=meta_ad");
+    expect(r.ads[0]).not.toHaveProperty("storyId");
+    expect(r.destinations?.map((d) => d.host)).toEqual(["riksquare2026.peatix.com"]);
+  });
+
+  it("投稿を読めなくても、画像はそのまま返す", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        const p = new URL(input).searchParams;
+        if (p.get("ids") === "ad1") return Response.json({ ad1: { id: "ad1", creative: { image_url: "https://img.example/1.jpg", effective_object_story_id: "page_post" } } });
+        if (p.get("ids") === "page_post") return Response.json({ error: { message: "pages_read_engagement" } }, { status: 403 });
+        if (p.get("level") === "ad") return Response.json({ data: [{ ad_id: "ad1", ad_name: "A", campaign_name: "C", spend: "50" }] });
+        return Response.json({ data: [] });
+      }),
+    );
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const r = await fetchMeta({ META_ACCESS_TOKEN: "tok" } as Env, ["1"], { startDate: "2026-10-15", endDate: "2026-10-16" }, { startDate: "2026-10-13", endDate: "2026-10-14" });
+    expect(r.ads[0]).toMatchObject({ imageUrl: "https://img.example/1.jpg" });
+    expect(r.ads[0].link).toBeUndefined();
+    expect(r.creativeError).toBeUndefined();
+  });
+
   it("APIエラーはアカウントIDとメッセージ付きで投げる", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ error: { message: "Invalid OAuth access token" } }, { status: 400 })));
     await expect(

@@ -44,7 +44,9 @@ type CreativeRow = {
   object_url?: string;
   object_story_spec?: { link_data?: { link?: string; call_to_action?: Cta }; video_data?: { call_to_action?: Cta } };
   asset_feed_spec?: { link_urls?: { website_url?: string }[] };
+  effective_object_story_id?: string;
 };
+type StoryRow = { call_to_action?: Cta; attachments?: { data?: { unshimmed_url?: string; url?: string }[] } };
 
 /** クリエイティブから、広告を押した先のURLを取り出す（画像・動画・ダイナミック広告で入る場所が違う） */
 export function creativeLink(c: CreativeRow | undefined): string | undefined {
@@ -60,13 +62,38 @@ export function creativeLink(c: CreativeRow | undefined): string | undefined {
   );
 }
 
-const CREATIVE_FIELDS = "image_url,thumbnail_url,link_url,object_url,object_story_spec,asset_feed_spec{link_urls}";
+const CREATIVE_FIELDS = "image_url,thumbnail_url,link_url,object_url,object_story_spec,asset_feed_spec{link_urls},effective_object_story_id";
+
+/** ページ投稿を宣伝する広告は、クリエイティブにリンク先がなく投稿の側にある */
+export function storyLink(s: StoryRow | undefined): string | undefined {
+  const a = s?.attachments?.data?.find((d) => d.unshimmed_url || d.url);
+  return s?.call_to_action?.value?.link || a?.unshimmed_url || a?.url || undefined;
+}
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-function creativeInfo(c: CreativeRow | undefined): { imageUrl?: string; link?: string } | undefined {
+type CreativeInfo = { imageUrl?: string; link?: string; storyId?: string };
+
+function creativeInfo(c: CreativeRow | undefined): CreativeInfo | undefined {
   const imageUrl = c?.image_url || c?.thumbnail_url;
   const link = creativeLink(c);
-  return imageUrl || link ? { ...(imageUrl && { imageUrl }), ...(link && { link }) } : undefined;
+  const storyId = link ? undefined : c?.effective_object_story_id;
+  return imageUrl || link || storyId ? { ...(imageUrl && { imageUrl }), ...(link && { link }), ...(storyId && { storyId }) } : undefined;
+}
+
+/** リンク先が投稿の側にある広告について、投稿を引いてリンク先を埋める。投稿を読む権限がなければそのまま */
+async function fillStoryLinks(env: Env, creatives: Map<string, CreativeInfo>): Promise<void> {
+  const ids = [...new Set([...creatives.values()].flatMap((c) => (c.storyId ? [c.storyId] : [])))];
+  if (!ids.length) return;
+  try {
+    const stories = (await graphGet(env, "", { ids: ids.join(","), fields: "call_to_action,attachments{unshimmed_url,url}" })) as Record<string, StoryRow>;
+    for (const c of creatives.values()) {
+      const link = c.storyId ? storyLink(stories[c.storyId]) : undefined;
+      if (link) c.link = link;
+    }
+  } catch (e) {
+    console.error("meta ad stories", errText(e));
+  }
+  for (const c of creatives.values()) delete c.storyId;
 }
 
 /**
@@ -79,7 +106,7 @@ export async function fetchAdCreatives(
   env: Env,
   adIds: string[],
 ): Promise<{ creatives: Map<string, { imageUrl?: string; link?: string }>; error?: string }> {
-  const creatives = new Map<string, { imageUrl?: string; link?: string }>();
+  const creatives = new Map<string, CreativeInfo>();
   if (!adIds.length) return { creatives };
   const size = { thumbnail_width: "600", thumbnail_height: "600" };
   try {
@@ -88,6 +115,7 @@ export async function fetchAdCreatives(
       const info = creativeInfo(a?.creative);
       if (info) creatives.set(adId, info);
     }
+    await fillStoryLinks(env, creatives);
     return { creatives };
   } catch (e) {
     console.error("meta ad creatives (batch)", errText(e));
@@ -109,6 +137,7 @@ export async function fetchAdCreatives(
     }),
   );
   if (errors.length) console.error("meta ad creatives", errors[0]);
+  await fillStoryLinks(env, creatives);
   return { creatives, ...(!creatives.size && errors.length && { error: errors[0] }) };
 }
 
