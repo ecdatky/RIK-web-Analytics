@@ -1,4 +1,4 @@
-import type { AdsReport, Ga4Report, MetaDestination, MetaReport, SiteReport } from "./types";
+import type { AdsReport, CompareKey, Ga4Report, MetaDestination, MetaReport, RangeKey, SiteReport } from "./types";
 
 // レポートの数字から、GA4・Google広告・Meta広告の問題点と「次にできる行動」を決まったルールで洗い出す。
 // AIの総評と違って毎回同じ基準で判定するので、改善したかどうかを日々の診断で追える。
@@ -23,6 +23,9 @@ export interface DiagnosisItem {
 export interface Diagnosis {
   siteId: string;
   checkedAt: string;
+  /** 画面の期間切替（表示中の期間・比較ごとに診断する） */
+  range: RangeKey;
+  compare: CompareKey;
   /** 診断に使ったデータの期間 */
   period: { startDate: string; endDate: string };
   dataFetchedAt: string;
@@ -43,7 +46,7 @@ const DEVICE_LABEL: Record<string, string> = { mobile: "スマホ", desktop: "PC
 const isMobile = (d: string) => /mobile/i.test(d);
 const isDesktop = (d: string) => /desktop/i.test(d);
 
-function diagnoseAds(a: AdsReport, ga4: Ga4Report | undefined, items: DiagnosisItem[], passed: string[]) {
+function diagnoseAds(a: AdsReport, ga4: Ga4Report | undefined, items: DiagnosisItem[], passed: string[], prevName: string) {
   const t = a.totals;
   const viaGa4 = a.source === "ga4";
   const cvName = viaGa4 ? "成果（GA4のキーイベント）" : "コンバージョン";
@@ -127,7 +130,7 @@ function diagnoseAds(a: AdsReport, ga4: Ga4Report | undefined, items: DiagnosisI
       where: "Google広告 > キャンペーン（期間比較をオン）",
     });
   } else if (cpa && cpaPrev) {
-    passed.push(`Google広告の1件あたりの費用は直前の28日から大きく悪化していません（${yen(cpaPrev)} → ${yen(cpa)}）。`);
+    passed.push(`Google広告の1件あたりの費用は${prevName}と比べて大きく悪化していません（${yen(cpaPrev)} → ${yen(cpa)}）。`);
   }
 
   // 5. 広告のクリックとGA4の訪問数のずれ（リンク先にGA4が入っていない・自動タグ設定漏れ）
@@ -333,12 +336,15 @@ export function diagnose(report: SiteReport, now = new Date()): Diagnosis {
   const items: DiagnosisItem[] = [];
   const passed: string[] = [];
   if (report.ga4) diagnoseGa4(report.ga4, items, passed);
-  if (report.ads) diagnoseAds(report.ads, report.ga4, items, passed);
+  const prevName = report.compare === "yoy" ? "前年の同じ日付" : "直前の同じ日数";
+  if (report.ads) diagnoseAds(report.ads, report.ga4, items, passed, prevName);
   if (report.meta) diagnoseMeta(report.meta, items, passed);
   items.sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
   return {
     siteId: report.siteId,
     checkedAt: now.toISOString(),
+    range: report.range,
+    compare: report.compare,
     period: { startDate: report.current.startDate, endDate: report.current.endDate },
     dataFetchedAt: report.fetchedAt,
     items,
