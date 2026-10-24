@@ -28,6 +28,7 @@ describe("diagnose", () => {
     const d = diagnose(demoReport(), now);
     expect(d.checkedAt).toBe(now.toISOString());
     expect(d.period).toEqual(current);
+    expect([d.range, d.compare]).toEqual(["28d", "prev"]);
     expect(d.dataFetchedAt).toBe("2026-10-20T22:00:00.000Z");
     const order = { high: 0, medium: 1, low: 2 };
     const ranks = d.items.map((i) => order[i.severity]);
@@ -36,6 +37,12 @@ describe("diagnose", () => {
       expect(i.action.length).toBeGreaterThan(0);
       expect(i.where.length).toBeGreaterThan(0);
     }
+  });
+
+  it("表示中の期間・比較をそのまま診断に記録する", () => {
+    const r = { ...demoReport(), range: "7d" as const, compare: "yoy" as const };
+    const d = diagnose(r);
+    expect([d.range, d.compare]).toEqual(["7d", "yoy"]);
   });
 
   it("成果0のキャンペーンと、スマホへの費用の偏りを見つける", () => {

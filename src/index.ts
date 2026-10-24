@@ -144,8 +144,8 @@ async function handleApi(request: Request, env: Env, ctx: ExecutionContext, url:
 
     case "/api/diagnosis": {
       if (!site) return json({ error: "site が不正です" }, 400);
-      if (request.method === "POST") return json({ diagnosis: await refreshDiagnosis(env, site) });
-      return json({ diagnosis: await getDiagnosis(env, site) });
+      if (request.method === "POST") return json({ diagnosis: await refreshDiagnosis(env, site, range, compare) });
+      return json({ diagnosis: await getDiagnosis(env, site, range, compare) });
     }
   }
   return json({ error: "not found" }, 404);

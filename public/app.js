@@ -709,7 +709,7 @@ async function renderSummary() {
         const [{ report }, { advice, job }, diagnosis] = await Promise.all([
           loadReport(s.id),
           api(adviceUrl(s.id)),
-          api(`/api/diagnosis?site=${encodeURIComponent(s.id)}`).then((r) => r.diagnosis, () => null),
+          api(diagnosisUrl(s.id)).then((r) => r.diagnosis, () => null),
         ]);
         return { s, report, advice, job, diagnosis };
       } catch (e) {
@@ -1272,6 +1272,7 @@ function adviceSection(sec, kindLabel) {
 const adviceMatchesView = (advice) => !!advice && advice.range === state.range && advice.compare === state.compare;
 const periodLabel = (range, compare) => `${RANGE_LABEL[range] ?? range}・${COMPARE_LABEL[compare] ?? compare}`;
 const adviceUrl = (siteId) => `/api/advice?site=${encodeURIComponent(siteId)}&range=${state.range}&compare=${state.compare}`;
+const diagnosisUrl = (siteId) => `/api/diagnosis?site=${encodeURIComponent(siteId)}&range=${state.range}&compare=${state.compare}`;
 
 const ADVICE_STAGE = {
   start: "生成を始めています",
@@ -1418,6 +1419,8 @@ const fmtDay = (ymd) => {
 function renderDiagnosis(d, siteId) {
   const box = $("#sec-diagnosis");
   if (!box) return;
+  // 読み込み中に期間を切り替えた場合など、表示中の期間と違う診断は出さない
+  if ((d.range ?? "28d") !== state.range || (d.compare ?? "prev") !== state.compare) return;
   const counts = { high: 0, medium: 0, low: 0 };
   d.items.forEach((i) => counts[i.severity]++);
   const summary = d.items.length
@@ -1444,7 +1447,7 @@ function renderDiagnosis(d, siteId) {
       <div><button class="btn" id="diag-run" data-site="${esc(siteId)}">最新データで再診断</button></div></div>
     <dl class="diag-meta">
       <div><dt>診断日時</dt><dd>${fmtDateTime(d.checkedAt)}</dd></div>
-      <div><dt>対象データ</dt><dd>${fmtDay(d.period.startDate)}〜${fmtDay(d.period.endDate)}（直近28日・直前の28日と比較）</dd></div>
+      <div><dt>対象期間</dt><dd>${fmtDay(d.period.startDate)}〜${fmtDay(d.period.endDate)}（直近${RANGE_LABEL[d.range ?? "28d"]}・${COMPARE_NAME[d.compare ?? "prev"]}と比較）</dd></div>
       <div><dt>データ取得</dt><dd>${fmtTime(d.dataFetchedAt)}</dd></div>
     </dl>
     <div class="diag-summary">${summary}</div>
@@ -1454,7 +1457,7 @@ function renderDiagnosis(d, siteId) {
         ? `<div class="diag-passed"><b>問題なしだった点</b><ul>${d.passed.map((p) => `<li>${esc(p)}</li>`).join("")}</ul></div>`
         : ""
     }
-    <p class="muted small">決まった基準で数字を自動チェックした結果です。30分ごとのデータ更新に合わせて診断し直します。広告やGA4の設定は自動では変更しません。</p>`;
+    <p class="muted small">決まった基準で数字を自動チェックした結果です。表示中の期間・比較のデータを取り直すたびに診断し直します。広告やGA4の設定は自動では変更しません。</p>`;
 }
 
 function drawTrend(g) {
@@ -1541,7 +1544,7 @@ async function renderSite(siteId) {
       $("#metric-seg").querySelectorAll("button").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.metric === m)));
       drawTrend(report.ga4);
     });
-    api(`/api/diagnosis?site=${encodeURIComponent(siteId)}`)
+    api(diagnosisUrl(siteId))
       .then(({ diagnosis }) => renderDiagnosis(diagnosis, siteId))
       .catch((e) => ($("#sec-diagnosis").innerHTML = `<div class="alert">${esc(e.message)}</div>`));
     loadAdvice(siteId).catch((e) => ($("#advice").innerHTML = `<div class="alert">${esc(e.message)}</div>`));
@@ -1650,7 +1653,7 @@ document.addEventListener("click", async (e) => {
     btn.disabled = true;
     btn.textContent = "診断中…";
     try {
-      const { diagnosis } = await api(`/api/diagnosis?site=${encodeURIComponent(btn.dataset.site)}`, { method: "POST" });
+      const { diagnosis } = await api(diagnosisUrl(btn.dataset.site), { method: "POST" });
       renderDiagnosis(diagnosis, btn.dataset.site);
     } catch (err) {
       $("#sec-diagnosis").insertAdjacentHTML("beforeend", `<div class="alert">${esc(err.message)}</div>`);
