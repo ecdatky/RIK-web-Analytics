@@ -1,4 +1,5 @@
 import type { CompareKey, Env, RangeKey, SiteConfig } from "./types";
+import { siteProfile } from "./sites";
 import { isCompareKey, isRangeKey } from "./dates";
 import { verifyAccess } from "./access";
 import { fetchRealtime } from "./google/ga4";
@@ -98,6 +99,9 @@ async function handleApi(request: Request, env: Env, ctx: ExecutionContext, url:
           hasGa4: !!s.ga4PropertyId,
           hasAds: hasGoogleAds(s),
           hasMeta: !!s.metaAdAccountIds?.length,
+          // いまの状況の判定を、サイトの目的に合わせた指標で行うため
+          role: siteProfile(s).role,
+          sendTo: siteProfile(s).sendTo ?? [],
         })),
       });
 

@@ -131,11 +131,11 @@ function glossaryBlock(extra) {
 
 // ---------- 状況の判定（数値から自動判定） ----------
 const LEVELS = {
-  good: { label: "好調", icon: "↑", text: "成果がはっきり伸びています" },
+  good: { label: "好調", icon: "↑", text: "重視する指標がはっきり伸びています" },
   steady: { label: "順調", icon: "↗", text: "おおむね良い方向です" },
   flat: { label: "横ばい", icon: "→", text: "大きな変化はありません" },
   caution: { label: "注意", icon: "↘", text: "悪化の兆しがあります" },
-  bad: { label: "要対策", icon: "↓", text: "成果が落ちています。手を打つ必要があります" },
+  bad: { label: "要対策", icon: "↓", text: "重視する指標が落ちています。手を打つ必要があります" },
 };
 const LEVEL_ORDER = ["bad", "caution", "flat", "steady", "good"];
 
@@ -153,9 +153,19 @@ function face(level, cls = "") {
   return `<svg class="face face-${level} ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><g class="face-eyes">${parts}</g></svg>`;
 }
 
+/** サイトの目的ごとに、いまの状況で重く見る指標（src/sites.ts と同じ考え方） */
+const STATUS_BASIS = {
+  corporate: "製品サイトなどへの送客とサイト内の回遊",
+  product: "成果（問い合わせ・資料請求など）",
+  media: "RIKCADお知らせ経由の閲覧と、記事を読む人の数",
+};
+const siteOf = (report) => state.sites?.find((s) => s.id === report.siteId);
+const roleOf = (report) => siteOf(report)?.role ?? "product";
+
 /**
  * 各指標の比較期間比を重み付けして合算し、5段階で判定する。
- * 訪問者数より成果（キーイベント・CV）とその効率を重く見る。件数が少ない指標は重みを下げる。
+ * サイトの目的に沿った指標を重く見る（製品サイトは問い合わせ・資料請求、コーポは送客・回遊、RIKシェアはRIKCADお知らせ経由の閲覧）。
+ * 件数が少ない指標は重みを下げる。
  */
 function health(report) {
   const sig = [];
@@ -177,7 +187,24 @@ function health(report) {
     });
   };
   const g = report.ga4?.totals;
-  if (g) {
+  const role = roleOf(report);
+  if (g && role === "corporate") {
+    const sendTo = siteOf(report)?.sendTo ?? [];
+    const sent = (report.ga4.linkClicks ?? []).filter((l) => sendTo.some((t) => l.domain === t || l.domain.endsWith(`.${t}`)));
+    if (sent.length) {
+      const sum = (p) => sent.reduce((s, l) => s + l.clicks[p], 0);
+      add("製品サイトなどへの送客（クリック）", sum("current"), sum("previous"), 3, { count: true });
+    }
+    add("1回の訪問で見られたページ数", ratio(g.screenPageViews.current, g.sessions.current), ratio(g.screenPageViews.previous, g.sessions.previous), 2, { fmt: fmtDec });
+    add("サイトに来た人", g.activeUsers.current, g.activeUsers.previous, 2, { count: true });
+    // 問い合わせは主目的ではないので軽く見る
+    add("問い合わせ", g.keyEvents.current, g.keyEvents.previous, 0.5, { count: true });
+  } else if (g && role === "media") {
+    const n = report.ga4.rikcadNews;
+    if (n) add("RIKCADお知らせ経由の閲覧", n.sessions.current, n.sessions.previous, 3, { count: true });
+    add("記事を読んだ人", g.activeUsers.current, g.activeUsers.previous, 2, { count: true });
+    add("しっかり読まれた割合", g.engagementRate.current, g.engagementRate.previous, 2, { fmt: fmtPct });
+  } else if (g) {
     add("サイトに来た人", g.activeUsers.current, g.activeUsers.previous, 1, { count: true });
     add("成果（問い合わせ・資料請求など）", g.keyEvents.current, g.keyEvents.previous, 3, { count: true });
     add("訪問が成果につながる割合", ratio(g.keyEvents.current, g.sessions.current), ratio(g.keyEvents.previous, g.sessions.previous), 2, { fmt: fmtPct });
@@ -239,7 +266,7 @@ function healthHero(report) {
       <div>
         <div class="hero-label">いまの状況：<strong>${l.label}</strong></div>
         <div class="hero-text" id="hero-headline">${esc(l.text)}</div>
-        <div class="muted small">${RANGE_LABEL[report.range]}間を${COMPARE_NAME[report.compare]}と比べて、成果（問い合わせ・資料請求など）を重く見て自動判定しています。</div>
+        <div class="muted small">${RANGE_LABEL[report.range]}間を${COMPARE_NAME[report.compare]}と比べて、${STATUS_BASIS[roleOf(report)]}を重く見て自動判定しています。</div>
       </div>
     </div>
     ${meter(h.level)}
