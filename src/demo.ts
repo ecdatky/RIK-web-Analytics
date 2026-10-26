@@ -102,6 +102,22 @@ export function demoGa4(site: SiteConfig, current: DateRange, previous: DateRang
       sessions: Math.round(sessions * (share as number)),
       keyEvents: Math.round(sessions * (share as number) * 0.01),
     })),
+    linkClicks:
+      site.id === "corp"
+        ? [
+            { domain: "products.rikcorp.jp", clicks: k(Math.round(sessions * 0.09), Math.round(prevSessions * 0.1)) },
+            { domain: "rik-support.net", clicks: k(Math.round(sessions * 0.03), Math.round(prevSessions * 0.03)) },
+            { domain: "peatix.com", clicks: k(Math.round(sessions * 0.01), Math.round(prevSessions * 0.01)) },
+          ]
+        : [],
+    rikcadNews:
+      site.id === "rikshare"
+        ? {
+            sessions: k(Math.round(sessions * 0.48), Math.round(prevSessions * 0.5)),
+            activeUsers: k(Math.round(users * 0.3), Math.round(prevUsers * 0.31)),
+            engagementRate: k(0.52, 0.55),
+          }
+        : undefined,
     today: { activeUsers: Math.round(base * 0.4), sessions: Math.round(base * 0.5), keyEvents: Math.round(base * 0.004) },
   };
 }

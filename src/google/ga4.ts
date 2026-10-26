@@ -10,6 +10,7 @@ export interface Row {
   metricValues?: { value: string }[];
 }
 export interface Report {
+  dimensionHeaders?: { name: string }[];
   rows?: Row[];
 }
 
@@ -73,6 +74,44 @@ export function groupChannels(rows: Row[], rikcadNews: boolean): Ga4Report["chan
     .slice(0, 10);
 }
 
+/** 2期間を指定したレポートの、行が current / previous どちらの期間か */
+function rangeOf(report: Report, r: Row): string {
+  const i = report.dimensionHeaders?.findIndex((h) => h.name === "dateRange") ?? -1;
+  return dim(r, i >= 0 ? i : (r.dimensionValues?.length ?? 1) - 1);
+}
+
+/** 他ドメインへのリンクのクリック数をドメイン別に（www. を除いて）まとめる */
+export function groupLinkClicks(report: Report): NonNullable<Ga4Report["linkClicks"]> {
+  const acc = new Map<string, { current: number; previous: number }>();
+  for (const r of report.rows ?? []) {
+    const domain = dim(r, 0).replace(/^www\./, "").toLowerCase();
+    if (!domain || domain === "(not set)") continue;
+    const a = acc.get(domain) ?? { current: 0, previous: 0 };
+    a[rangeOf(report, r) === "previous" ? "previous" : "current"] += num(r, 0);
+    acc.set(domain, a);
+  }
+  return [...acc]
+    .map(([domain, clicks]) => ({ domain, clicks }))
+    .sort((x, y) => y.clicks.current - x.clicks.current)
+    .slice(0, 15);
+}
+
+/** RIKCADお知らせ（medium=rss）の訪問を current / previous に分ける */
+export function rikcadNewsTotals(report: Report): NonNullable<Ga4Report["rikcadNews"]> {
+  const out = {
+    sessions: { current: 0, previous: 0 },
+    activeUsers: { current: 0, previous: 0 },
+    engagementRate: { current: 0, previous: 0 },
+  };
+  for (const r of report.rows ?? []) {
+    const p = rangeOf(report, r) === "previous" ? "previous" : "current";
+    out.sessions[p] = num(r, 0);
+    out.activeUsers[p] = num(r, 1);
+    out.engagementRate[p] = num(r, 2);
+  }
+  return out;
+}
+
 export async function fetchGa4(
   env: Env,
   propertyId: string,
@@ -84,7 +123,12 @@ export async function fetchGa4(
   const today = todayJst();
   const cur = [{ ...current, name: "current" }];
 
-  const [batchA, batchB] = await Promise.all([
+  const both = [
+    { ...current, name: "current" },
+    { ...previous, name: "previous" },
+  ];
+
+  const [batchA, batchB, batchC] = await Promise.all([
     post<{ reports: Report[] }>(env, `${property}:batchRunReports`, {
       requests: [
         { dateRanges: [{ ...current, name: "current" }, { ...previous, name: "previous" }], metrics: TOTAL_METRICS.map(m) },
@@ -136,6 +180,32 @@ export async function fetchGa4(
         { dateRanges: [{ startDate: today, endDate: today }], metrics: [m("activeUsers"), m("sessions"), m("keyEvents")] },
       ],
     }),
+    // サイトの目的に合わせた指標（他サイトへの送客、RIKCADお知らせ経由の閲覧）。取れなくても他の数字は出す
+    post<{ reports: Report[] }>(env, `${property}:batchRunReports`, {
+      requests: [
+        {
+          dateRanges: both,
+          dimensions: [d("linkDomain")],
+          metrics: [m("eventCount")],
+          dimensionFilter: { filter: { fieldName: "eventName", stringFilter: { matchType: "EXACT", value: "click" } } },
+          orderBys: [{ metric: { metricName: "eventCount" }, desc: true }],
+          limit: 50,
+        },
+        ...(opts.rikcadNews
+          ? [
+              {
+                dateRanges: both,
+                dimensions: [d("sessionMedium")],
+                metrics: [m("sessions"), m("activeUsers"), m("engagementRate")],
+                dimensionFilter: { filter: { fieldName: "sessionMedium", stringFilter: { matchType: "EXACT", value: "rss" } } },
+              },
+            ]
+          : []),
+      ],
+    }).catch((e) => {
+      console.error("ga4 purpose metrics", propertyId, e instanceof Error ? e.message : e);
+      return undefined;
+    }),
   ]);
 
   const [totalsR, dailyR, dailyPrevR, channelR, deviceR] = batchA.reports;
@@ -154,6 +224,7 @@ export async function fetchGa4(
   ) as Ga4Report["totals"];
 
   const todayRow = todayR.rows?.[0];
+  const [linkR, newsR] = batchC?.reports ?? [];
 
   return {
     totals,
@@ -179,6 +250,8 @@ export async function fetchGa4(
       const label = opts.rikcadNews && sm === "rss / rss" ? `${RIKCAD_NEWS_LABEL}（${sm}）` : sm;
       return { sourceMedium: label, sessions: num(r, 0), keyEvents: num(r, 1) };
     }),
+    linkClicks: linkR && groupLinkClicks(linkR),
+    rikcadNews: newsR && rikcadNewsTotals(newsR),
     today: {
       activeUsers: todayRow ? num(todayRow, 0) : 0,
       sessions: todayRow ? num(todayRow, 1) : 0,

@@ -90,7 +90,7 @@ const adviceKey = (siteId: string, range: RangeKey, compare: CompareKey) => `${a
 const legacyAdviceKey = (siteId: string) => `advice:v2:${siteId}`;
 const adviceJobKey = (siteId: string, range: RangeKey, compare: CompareKey) => `advice-job:v1:${siteId}:${range}:${compare}`;
 // 診断も期間（range×compare）ごとに保存する。画面で見ている期間と違う診断は出さない
-const diagKey = (siteId: string, range: RangeKey, compare: CompareKey) => `diag:v2:${siteId}:${range}:${compare}`;
+const diagKey = (siteId: string, range: RangeKey, compare: CompareKey) => `diag:v3:${siteId}:${range}:${compare}`;
 // KV には長めに残し、鮮度判定は fetchedAt で行う（古いデータでも即表示 → 裏で更新）
 const KV_KEEP_SECONDS = 3 * 86_400;
 
@@ -112,7 +112,7 @@ export async function refreshReport(env: Env, site: SiteConfig, range: RangeKey,
   if (!failed) {
     await env.CACHE.put(reportKey(site.id, range, compare), JSON.stringify(report), { expirationTtl: KV_KEEP_SECONDS });
     // 診断はその期間のデータを取り直すたびに作り直す（定期の先読みで自動更新される）
-    await saveDiagnosis(env, diagnose(report));
+    await saveDiagnosis(env, diagnose(report, site));
   }
   return report;
 }
@@ -205,7 +205,7 @@ export async function getDiagnosis(env: Env, site: SiteConfig, range: RangeKey, 
   if (saved) return saved;
   const report = await getCachedReport(env, site.id, range, compare);
   if (!report) return refreshDiagnosis(env, site, range, compare);
-  const d = diagnose(report);
+  const d = diagnose(report, site);
   await saveDiagnosis(env, d);
   return d;
 }
@@ -213,7 +213,7 @@ export async function getDiagnosis(env: Env, site: SiteConfig, range: RangeKey, 
 /** 最新のデータを取り直して診断し直す */
 export async function refreshDiagnosis(env: Env, site: SiteConfig, range: RangeKey, compare: CompareKey): Promise<Diagnosis> {
   const report = await refreshReport(env, site, range, compare);
-  const d = diagnose(report);
+  const d = diagnose(report, site);
   await saveDiagnosis(env, d);
   return d;
 }

@@ -1,7 +1,9 @@
-import type { AdsReport, CompareKey, Ga4Report, MetaDestination, MetaReport, RangeKey, SiteReport } from "./types";
+import type { AdsReport, CompareKey, Ga4Report, MetaDestination, MetaReport, RangeKey, SiteConfig, SiteReport, SiteRole } from "./types";
+import { siteProfile, type SiteProfile } from "./sites";
 
 // レポートの数字から、GA4・Google広告・Meta広告の問題点と「次にできる行動」を決まったルールで洗い出す。
 // AIの総評と違って毎回同じ基準で判定するので、改善したかどうかを日々の診断で追える。
+// GA4はサイトの目的（src/sites.ts）に合わせた指標で判定する。コーポレートは送客・回遊、製品は問い合わせ・資料請求、RIKシェアはRIKCADお知らせ経由の閲覧。
 
 export type DiagnosisSeverity = "high" | "medium" | "low";
 export type DiagnosisArea = "ga4" | "ads" | "meta" | "measure";
@@ -26,6 +28,9 @@ export interface Diagnosis {
   /** 画面の期間切替（表示中の期間・比較ごとに診断する） */
   range: RangeKey;
   compare: CompareKey;
+  /** 判定に使ったサイトの種類と目的。旧データには無い */
+  role?: SiteRole;
+  purpose?: { label: string; kpis: string[] };
   /** 診断に使ったデータの期間 */
   period: { startDate: string; endDate: string };
   dataFetchedAt: string;
@@ -170,10 +175,38 @@ function diagnoseAds(a: AdsReport, ga4: Ga4Report | undefined, items: DiagnosisI
   }
 }
 
-function diagnoseGa4(g: Ga4Report, items: DiagnosisItem[], passed: string[]) {
+function diagnoseGa4(g: Ga4Report, profile: SiteProfile, items: DiagnosisItem[], passed: string[], prevName: string) {
+  if (g.totals.sessions.current < 50) return;
+  if (profile.role === "corporate") return diagnoseCorporate(g, profile, items, passed, prevName);
+  if (profile.role === "media") return diagnoseMedia(g, items, passed, prevName);
+  diagnoseConversions(g, items, passed);
+}
+
+/** 入口ページの離脱（訪問の多いページでエンゲージメントが低い） */
+function weakLanding(g: Ga4Report, items: DiagnosisItem[], action: string) {
+  const sessions = g.totals.sessions.current;
+  const weak = g.landingPages
+    .filter((p) => p.sessions >= sessions * 0.05 && p.engagementRate < 0.4)
+    .sort((a, b) => b.sessions - a.sessions);
+  if (!weak.length) return;
+  const p = weak[0];
+  items.push({
+    id: `ga4-landing-${p.path}`,
+    area: "ga4",
+    severity: "medium",
+    title: `入口ページ「${p.path}」で多くの人がすぐ離れています`,
+    evidence: `このページから始まる訪問 ${int(p.sessions)}回（全体の${pct(p.sessions / sessions)}）のうち、しっかり見られた割合は${pct(p.engagementRate)}。${
+      weak.length > 1 ? `ほかに${weak.length - 1}ページが同じ状態です。` : ""
+    }`,
+    action,
+    where: "GA4 > レポート > エンゲージメント > ランディング ページ",
+  });
+}
+
+/** 製品サイト（と種類の決まらないサイト）：問い合わせ・資料請求につながっているか */
+function diagnoseConversions(g: Ga4Report, items: DiagnosisItem[], passed: string[]) {
   const t = g.totals;
   const sessions = t.sessions.current;
-  if (sessions < 50) return;
   const kev = t.keyEvents.current;
 
   // 1. キーイベントが1件もない
@@ -207,24 +240,12 @@ function diagnoseGa4(g: Ga4Report, items: DiagnosisItem[], passed: string[]) {
     passed.push(`訪問が成果につながる割合は大きく下がっていません（${pct(cvrPrev)} → ${pct(cvr)}）。`);
   }
 
-  // 3. 入口ページの離脱（訪問の多いページでエンゲージメントが低い）
-  const weak = g.landingPages
-    .filter((p) => p.sessions >= sessions * 0.05 && p.engagementRate < 0.4)
-    .sort((a, b) => b.sessions - a.sessions);
-  if (weak.length) {
-    const p = weak[0];
-    items.push({
-      id: `ga4-landing-${p.path}`,
-      area: "ga4",
-      severity: "medium",
-      title: `入口ページ「${p.path}」で多くの人がすぐ離れています`,
-      evidence: `このページから始まる訪問 ${int(p.sessions)}回（全体の${pct(p.sessions / sessions)}）のうち、しっかり見られた割合は${pct(p.engagementRate)}。${
-        weak.length > 1 ? `ほかに${weak.length - 1}ページが同じ状態です。` : ""
-      }`,
-      action: "ページ上部で何のページかすぐわかるようにし、広告やSNSから来た人が探している情報（製品の特長・価格・事例）への導線を置く。広告のリンク先なら広告文と内容が合っているかも確認する。",
-      where: "GA4 > レポート > エンゲージメント > ランディング ページ",
-    });
-  }
+  // 3. 入口ページの離脱
+  weakLanding(
+    g,
+    items,
+    "ページ上部で何のページかすぐわかるようにし、広告やSNSから来た人が探している情報（製品の特長・価格・事例）への導線を置く。広告のリンク先なら広告文と内容が合っているかも確認する。",
+  );
 
   // 4. スマホで成果が出にくい（デバイス別のキーイベントは無いので、比率で見る）
   const mob = g.devices.find((d) => isMobile(d.device));
@@ -239,6 +260,188 @@ function diagnoseGa4(g: Ga4Report, items: DiagnosisItem[], passed: string[]) {
       where: "サイトをスマホで開いて確認 / GA4 > レポート > ユーザー属性 > テクノロジー",
     });
   }
+}
+
+const matchesDomain = (domain: string, targets: string[]) => targets.some((t) => domain === t || domain.endsWith(`.${t}`));
+
+/** コーポレートサイト：会社の情報が見られているか、製品サイトなど各サイトへの入口として働いているか。問い合わせ件数は主目的ではない */
+function diagnoseCorporate(g: Ga4Report, profile: SiteProfile, items: DiagnosisItem[], passed: string[], prevName: string) {
+  const t = g.totals;
+  const sessions = t.sessions.current;
+
+  // 1. 各サイトへの送客（他ドメインへのリンクのクリック）
+  if (g.linkClicks) {
+    const targets = profile.sendTo ?? [];
+    const sent = g.linkClicks.filter((l) => matchesDomain(l.domain, targets));
+    const cur = sent.reduce((s, l) => s + l.clicks.current, 0);
+    const prev = sent.reduce((s, l) => s + l.clicks.previous, 0);
+    const per100 = (c: number, s: number) => (s ? (c / s) * 100 : 0);
+    const rate = per100(cur, sessions);
+    const ratePrev = per100(prev, t.sessions.previous);
+    const byDomain = sent
+      .filter((l) => l.clicks.current)
+      .map((l) => `${l.domain} ${int(l.clicks.current)}回`)
+      .join("、");
+    if (!g.linkClicks.length) {
+      items.push({
+        id: "measure-corp-link-clicks",
+        area: "measure",
+        severity: "medium",
+        title: "製品サイトなど他のサイトへのリンクのクリックが記録されていません",
+        evidence: `訪問 ${int(sessions)}回に対して、他のドメインへのリンクのクリック（click イベント）が0件。このサイトの役目である「各サイトへの入口」の働きを測れていません。`,
+        action:
+          "GA4の拡張計測機能で「離脱クリック」をオンにする。products.rikcorp.jp などをクロスドメイン設定に入れている場合はクリックとして数えられないので、製品サイト側のGA4で参照元 www.rikcorp.jp の訪問を見る。",
+        where: "GA4 > 管理 > データストリーム > 対象ストリーム > 拡張計測機能 / タグ設定 > ドメインの設定",
+      });
+    } else if (!cur) {
+      items.push({
+        id: "corp-send-none",
+        area: "ga4",
+        severity: "medium",
+        title: "製品サイトなどへの送客がほとんど記録されていません",
+        evidence: `他のドメインへのクリックは記録されていますが、${targets.join("・")} へのクリックは0件。`,
+        action: "トップページ・会社案内・サービス紹介のページに、RIKCADや各製品の詳しいページ（製品サイト）へのリンクが見つけやすい位置にあるか確認する。",
+        where: "サイトの各ページ / GA4 > レポート > エンゲージメント > イベント > click（link_domain）",
+      });
+    } else if (prev && change(rate, ratePrev) <= -0.2) {
+      items.push({
+        id: "corp-send-down",
+        area: "ga4",
+        severity: change(rate, ratePrev) <= -0.4 ? "high" : "medium",
+        title: `製品サイトなどへの送客が${pct(-change(rate, ratePrev))}減っています`,
+        evidence: `訪問100回あたりのクリック ${dec(ratePrev)}回 → ${dec(rate)}回（${int(prev)} → ${int(cur)}回）。内訳: ${byDomain}。`,
+        action: "よく見られているページ（ニュース・会社案内など）から、関係する製品・サービスのページへのリンクを本文の近くに置く。リンクの位置や文言を最近変えたページがないかも確認する。",
+        where: "GA4 > レポート > エンゲージメント > ページとスクリーン / イベント > click",
+      });
+    } else {
+      passed.push(`製品サイトなどへの送客は訪問100回あたり${dec(rate)}回です（${byDomain}）${prev ? `。${prevName}は${dec(ratePrev)}回` : ""}。`);
+    }
+  }
+
+  // 2. サイト内の回遊（1訪問あたりのページ数）
+  const pps = ratio(t.screenPageViews.current, sessions);
+  const ppsPrev = ratio(t.screenPageViews.previous, t.sessions.previous);
+  if (ppsPrev && change(pps, ppsPrev) <= -0.2) {
+    items.push({
+      id: "corp-pages-down",
+      area: "ga4",
+      severity: "medium",
+      title: `1回の訪問で見られるページ数が${pct(-change(pps, ppsPrev))}減っています`,
+      evidence: `${dec(ppsPrev)}ページ → ${dec(pps)}ページ（ページビュー ${int(t.screenPageViews.previous)} → ${int(t.screenPageViews.current)}、訪問 ${int(t.sessions.previous)} → ${int(sessions)}）。`,
+      action: "入口として多いページに、会社案内・サービス紹介・ニュースなど次に読むページへのリンクを置き、会社の全体像がつかめるようにする。",
+      where: "GA4 > レポート > エンゲージメント > ランディング ページ",
+    });
+  } else if (ppsPrev) {
+    passed.push(`1回の訪問で見られるページ数は大きく減っていません（${dec(ppsPrev)} → ${dec(pps)}ページ）。`);
+  }
+
+  // 3. 入口ページの離脱
+  weakLanding(
+    g,
+    items,
+    "ページ上部で何の会社・何のページかすぐわかるようにし、会社案内・サービス紹介や、製品サイトなど詳しいサイトへの入口を近くに置く。",
+  );
+
+  // 4. 問い合わせは主目的ではないので、0件でも計測の確認だけにとどめる
+  if (t.keyEvents.current === 0) {
+    items.push({
+      id: "corp-no-contact",
+      area: "measure",
+      severity: "low",
+      title: "問い合わせ（キーイベント）はこの期間0件です",
+      evidence: `訪問 ${int(sessions)}回に対してキーイベント 0件。このサイトの主な目的は会社の情報を伝え、各サイトへの入口になることなので、件数そのものは重く見ません。`,
+      action: "問い合わせフォームの送信が計測されているか（contact_form_submit）だけ、GA4のリアルタイムやテスト送信で確認する。",
+      where: "GA4 > 管理 > イベント / レポート > リアルタイム",
+    });
+  }
+
+  const mob = g.devices.find((d) => isMobile(d.device));
+  if (mob && mob.sessions >= sessions * 0.6) {
+    items.push({
+      id: "ga4-mobile-share",
+      area: "ga4",
+      severity: "low",
+      title: `訪問の${pct(mob.sessions / sessions)}がスマホからです`,
+      evidence: `スマホ ${int(mob.sessions)}回 / 全体 ${int(sessions)}回。`,
+      action: "スマホのメニューから会社案内・サービス紹介・製品サイトへのリンクがすぐ見つかるかを実機で確認する。",
+      where: "サイトをスマホで開いて確認 / GA4 > レポート > ユーザー属性 > テクノロジー",
+    });
+  }
+}
+
+/** オウンドメディア（RIKシェア）：RIKCADユーザーに記事が届き、読まれているか。問い合わせ・資料請求は目的にしない */
+function diagnoseMedia(g: Ga4Report, items: DiagnosisItem[], passed: string[], prevName: string) {
+  const t = g.totals;
+  const sessions = t.sessions.current;
+
+  // 1. RIKCADお知らせ経由の閲覧
+  const news = g.rikcadNews;
+  if (news) {
+    const cur = news.sessions.current;
+    const prev = news.sessions.previous;
+    if (!cur) {
+      items.push({
+        id: "measure-rikcad-news",
+        area: "measure",
+        severity: "high",
+        title: "RIKCADお知らせ経由の訪問が記録されていません",
+        evidence: `訪問 ${int(sessions)}回のうち、RIKCADお知らせ（rss / rss）経由は0回。${prev ? `${prevName}は${int(prev)}回ありました。` : ""}`,
+        action:
+          "RSS（https://www.rik-support.net/share/feed/）に最新の投稿が出ているか、記事リンクに utm_medium=rss が付いているかを確認する。RIKCADを起動してお知らせ画面に記事が表示されるかも見る。",
+        where: "ブラウザで https://www.rik-support.net/share/feed/ を開く / RIKCADのお知らせ画面",
+      });
+    } else if (prev && change(cur, prev) <= -0.2) {
+      items.push({
+        id: "media-news-down",
+        area: "ga4",
+        severity: change(cur, prev) <= -0.4 ? "high" : "medium",
+        title: `RIKCADお知らせ経由の閲覧が${pct(-change(cur, prev))}減っています`,
+        evidence: `訪問 ${int(prev)} → ${int(cur)}回、ユーザー ${int(news.activeUsers.previous)} → ${int(news.activeUsers.current)}人（全訪問の${pct(ratio(cur, sessions))}）。`,
+        action:
+          "お知らせ画面では記事のタイトルが入口になるので、何の情報か・誰向けかがタイトルで分かるようにする。投稿の間隔が空いていないかも確認し、新しい情報を定期的に出す。",
+        where: "WordPress（RIKシェア）の投稿一覧 / GA4 > レポート > 集客 > トラフィック獲得",
+      });
+    } else {
+      passed.push(
+        `RIKCADお知らせ経由の閲覧は${int(cur)}回・${int(news.activeUsers.current)}人で、全訪問の${pct(ratio(cur, sessions))}です${prev ? `（${prevName}は${int(prev)}回）` : ""}。`,
+      );
+    }
+  }
+
+  // 2. 読む人の数
+  const users = t.activeUsers;
+  if (users.previous && change(users.current, users.previous) <= -0.2) {
+    items.push({
+      id: "media-users-down",
+      area: "ga4",
+      severity: "medium",
+      title: `記事を読む人が${pct(-change(users.current, users.previous))}減っています`,
+      evidence: `ユーザー ${int(users.previous)} → ${int(users.current)}人（訪問 ${int(t.sessions.previous)} → ${int(sessions)}回）。`,
+      action: "よく読まれた記事のテーマ（操作のコツ・新機能・サポート情報など）を確認し、同じテーマの記事を続けて出す。",
+      where: "GA4 > レポート > エンゲージメント > ページとスクリーン",
+    });
+  } else if (users.previous) {
+    passed.push(`記事を読む人の数は大きく減っていません（${int(users.previous)} → ${int(users.current)}人）。`);
+  }
+
+  // 3. しっかり読まれた割合
+  const er = t.engagementRate;
+  if (er.previous && change(er.current, er.previous) <= -0.15) {
+    items.push({
+      id: "media-engagement-down",
+      area: "ga4",
+      severity: "medium",
+      title: `記事がしっかり読まれた割合が${pct(-change(er.current, er.previous))}下がっています`,
+      evidence: `${pct(er.previous)} → ${pct(er.current)}。`,
+      action: "記事の冒頭で要点（何ができるようになるか）を先に書き、画像や手順で読み進めやすくする。関連する記事へのリンクを最後に置く。",
+      where: "GA4 > レポート > エンゲージメント > ページとスクリーン",
+    });
+  } else if (er.previous) {
+    passed.push(`記事がしっかり読まれた割合は保てています（${pct(er.previous)} → ${pct(er.current)}）。`);
+  }
+
+  // 4. 入口ページの離脱
+  weakLanding(g, items, "記事の冒頭で要点が分かるようにし、タイトルと内容がずれていないか確認する。関連する記事への導線を置く。");
 }
 
 // 自社のGA4・Metaピクセルを入れられない外部の受付ページ。ここに送る広告は、サイト側では成果を測れない
@@ -332,11 +535,12 @@ function diagnoseMeta(m: MetaReport, items: DiagnosisItem[], passed: string[]) {
   }
 }
 
-export function diagnose(report: SiteReport, now = new Date()): Diagnosis {
+export function diagnose(report: SiteReport, site?: Pick<SiteConfig, "id" | "url" | "role">, now = new Date()): Diagnosis {
   const items: DiagnosisItem[] = [];
   const passed: string[] = [];
-  if (report.ga4) diagnoseGa4(report.ga4, items, passed);
+  const profile = siteProfile(site ?? { id: report.siteId });
   const prevName = report.compare === "yoy" ? "前年の同じ日付" : "直前の同じ日数";
+  if (report.ga4) diagnoseGa4(report.ga4, profile, items, passed, prevName);
   if (report.ads) diagnoseAds(report.ads, report.ga4, items, passed, prevName);
   if (report.meta) diagnoseMeta(report.meta, items, passed);
   items.sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
@@ -345,6 +549,8 @@ export function diagnose(report: SiteReport, now = new Date()): Diagnosis {
     checkedAt: now.toISOString(),
     range: report.range,
     compare: report.compare,
+    role: profile.role,
+    purpose: { label: profile.label, kpis: profile.kpis },
     period: { startDate: report.current.startDate, endDate: report.current.endDate },
     dataFetchedAt: report.fetchedAt,
     items,

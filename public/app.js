@@ -1450,6 +1450,11 @@ function renderDiagnosis(d, siteId) {
       <div><dt>対象期間</dt><dd>${fmtDay(d.period.startDate)}〜${fmtDay(d.period.endDate)}（直近${RANGE_LABEL[d.range ?? "28d"]}・${COMPARE_NAME[d.compare ?? "prev"]}と比較）</dd></div>
       <div><dt>データ取得</dt><dd>${fmtTime(d.dataFetchedAt)}</dd></div>
     </dl>
+    ${
+      d.purpose
+        ? `<p class="diag-purpose"><b>このサイトの目的</b>${esc(d.purpose.label)}<span class="muted">（重視する指標: ${d.purpose.kpis.slice(0, 2).map(esc).join("、")}）</span></p>`
+        : ""
+    }
     <div class="diag-summary">${summary}</div>
     ${d.items.length ? `<ol class="diag-list">${actions}</ol>` : ""}
     ${
