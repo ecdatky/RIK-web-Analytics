@@ -25,6 +25,9 @@ export interface Env {
   ANTHROPIC_API_KEY?: string;
 }
 
+/** corporate: コーポレートサイト / product: 製品サイト / media: オウンドメディア（RIKシェア） */
+export type SiteRole = "corporate" | "product" | "media";
+
 export interface SiteConfig {
   id: string;
   name: string;
@@ -39,7 +42,9 @@ export interface SiteConfig {
   metaConversionActions?: string[];
   /** RIKCADのお知らせ(RSS)の流入を「RIKCADお知らせ」と表示する。未指定なら URL が rik-support.net/share のサイトで有効 */
   rikcadNews?: boolean;
-  /** AIアドバイスに渡すサイトの目的・KPIなど（任意） */
+  /** サイトの種類。未指定なら id・URL から決める（src/sites.ts） */
+  role?: SiteRole;
+  /** AIアドバイスに渡す、サイトの目的・KPIの補足（任意） */
   goal?: string;
 }
 
@@ -69,6 +74,10 @@ export interface Ga4Report {
   topPages: { path: string; title: string; views: number; users: number; engagementRate: number }[];
   landingPages: { path: string; sessions: number; engagementRate: number; keyEvents: number }[];
   sourceMedium: { sourceMedium: string; sessions: number; keyEvents: number }[];
+  /** 他のドメインへのリンクのクリック（拡張計測の click イベント）。旧データには無い */
+  linkClicks?: { domain: string; clicks: Kpi }[];
+  /** RIKCADお知らせ（medium=rss）経由の訪問。RIKシェアのみ。旧データには無い */
+  rikcadNews?: { sessions: Kpi; activeUsers: Kpi; engagementRate: Kpi };
   today: { activeUsers: number; sessions: number; keyEvents: number };
 }
 

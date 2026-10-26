@@ -3,6 +3,7 @@ import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import * as z from "zod/v4";
 import type { Advice, AdsReport, Env, MetaReport, SiteConfig, SiteReport } from "../types";
 import { COMPARE_LABEL } from "../dates";
+import { siteProfile } from "../sites";
 
 const DEFAULT_MODEL = "claude-opus-5-5";
 
@@ -45,7 +46,7 @@ const SYSTEM = `あなたは株式会社ユニマットリック（エクステ�
 読み手はマーケティンググループのメンバーと、Web広告の専門家ではない営業・経営層です。専門用語を知らない人でも、現状が良いのか悪いのか、次に何をすればよいのかが分かるように書きます。
 
 出力は GA4（ga4）、Google広告（ads）、Meta広告（meta）を分けて書きます。データが無いものは null にします。
-- status: 比較期間と比べた状況の判定。good（好調：成果が明確に伸びている）/ steady（順調：おおむね良い方向）/ flat（横ばい）/ caution（注意：悪化の兆しがある）/ bad（要対策：成果が明確に落ちている）から選びます。訪問者数より、問い合わせ・資料請求などの成果（キーイベント・CV）と、その獲得効率を重く見て判定します。件数が少なく増減が偶然の範囲なら flat にします。
+- status: 比較期間と比べた状況の判定。good（好調：成果が明確に伸びている）/ steady（順調：おおむね良い方向）/ flat（横ばい）/ caution（注意：悪化の兆しがある）/ bad（要対策：成果が明確に落ちている）から選びます。ここでの「成果」は、site.profile.kpis に挙げた、そのサイトの目的に沿った指標です（上にあるものほど重い）。件数が少なく増減が偶然の範囲なら flat にします。
 - headline: サイト全体の状況を一文（40字程度まで）で言い切ります。例「アクセスは増えたが、問い合わせは減っている」。
 - summary: サイト全体の状況を2〜3文で。何が良くて何が課題か、まず何をすべきかを書きます。GA4と広告をまたいだ見立て（広告から来た人がサイトで問い合わせまで進んでいるか、Google広告とMeta広告のどちらが効率よく成果を取れているか等）があれば入れます。
 - review: その領域の総評。2〜3文で、比較期間に対して良くなったか悪くなったか、その主な原因を書きます。
@@ -59,6 +60,13 @@ const SYSTEM = `あなたは株式会社ユニマットリック（エクステ�
 - 英字略語は初出で「CPA（1件の成果を得るのにかかった広告費）」のように括弧で意味を添えます。2回目以降は略語だけで構いません。
 - 「〜と考えられる」「〜の可能性」を重ねず、データで言えることは言い切ります。数値の裏付けがない推測には「推測」と明記します。
 - 誇張表現、前置き、敬語の重ね過ぎは不要です。
+サイトごとの目的
+site.profile に、そのサイトの対象（audience）・目的（purpose）・重視する指標（kpis）が入っています。判定・総評・提案はすべてこの目的に照らして書き、目的に合わない指標で良し悪しを決めません。
+- コーポレートサイト（role: corporate）: 会社の情報を正しく伝え、製品サイトなど詳しいサイトへの入口になり、信頼と興味を高めて将来の顧客に育てるサイトです。問い合わせ（キーイベント）が少ない・0件でも主要な問題にしません。製品サイト等へのリンクのクリック（ga4.sendToSites、ga4.linkClicks）による送客、1訪問あたりのページ数やエンゲージメント率による回遊、会社案内・ニュース・イベントのページが見られているかを重く見ます。提案も「問い合わせを増やす」より「会社の全体像を伝える」「各サイトへの入口を分かりやすくする」方向で書きます。
+- 製品サイト（role: product）: 製品・サービスの魅力を伝え、問い合わせ・資料請求につなげるサイトです。問い合わせ・資料請求（キーイベント・広告のCV）の件数と、その獲得効率を最も重く見ます。
+- オウンドメディア RIKシェア（role: media）: RIKCADユーザーに正しい情報・最新の情報を届けるサイトで、投稿はRIKCAD起動時のお知らせ画面に自動で表示されます。問い合わせ・資料請求などのキーイベントは目的ではないので、件数やCVRには触れず、キーイベントの設定も勧めません。RIKCADお知らせ経由の閲覧（ga4.rikcadNews）、記事を読む人の数、記事がしっかり読まれた割合（エンゲージメント率）、どの記事・テーマが読まれたかで評価し、提案は記事のテーマ・タイトル・投稿頻度・読みやすさについて書きます。
+- site.goal がある場合は、その補足も目的として扱います。
+
 - チャネル「RIKCADお知らせ」（参照元/メディア rss / rss）は、RIKCAD起動時に出るお知らせ画面からRIKシェアの記事を開いた訪問です。既存のRIKCADユーザーの再訪なので、新規獲得の流入とは分けて評価します。記事タブを開いたまま30分以上たって再開した分も同じ流入として数えられるため、セッション数は実際のクリック数より多めに出ます。
 
 Google広告では次の観点で効果を判断します。
@@ -134,8 +142,16 @@ function metaDigest(m: MetaReport) {
 /** AIに渡す要約。生データをそのまま渡さず、比較しやすい形に絞る */
 export function buildDigest(site: SiteConfig, report: SiteReport) {
   const g = report.ga4;
+  const profile = siteProfile(site);
+  const sendTo = profile.sendTo ?? [];
+  const sent = g?.linkClicks?.filter((l) => sendTo.some((t) => l.domain === t || l.domain.endsWith(`.${t}`)));
   return {
-    site: { name: site.name, url: site.url, goal: site.goal },
+    site: {
+      name: site.name,
+      url: site.url,
+      goal: site.goal,
+      profile: { role: profile.role, audience: profile.audience, purpose: profile.purpose, kpis: profile.kpis },
+    },
     period: { current: report.current, comparison: report.previous, comparisonType: COMPARE_LABEL[report.compare] },
     ga4: g && {
       totals: withChange(g.totals),
@@ -144,6 +160,14 @@ export function buildDigest(site: SiteConfig, report: SiteReport) {
       topPages: g.topPages.slice(0, 10),
       landingPages: g.landingPages.slice(0, 10),
       sourceMedium: g.sourceMedium,
+      pagesPerSession: {
+        current: g.totals.sessions.current ? g.totals.screenPageViews.current / g.totals.sessions.current : null,
+        previous: g.totals.sessions.previous ? g.totals.screenPageViews.previous / g.totals.sessions.previous : null,
+      },
+      // 他のドメインへのリンクのクリック（GA4の click イベント）。コーポレートサイトの送客を見る
+      linkClicks: g.linkClicks,
+      sendToSites: profile.role === "corporate" && sent ? { domains: sendTo, clicks: sent } : undefined,
+      rikcadNews: g.rikcadNews && withChange(g.rikcadNews),
     },
     ga4Error: report.ga4Error,
     ads: report.ads && adsDigest(report.ads),

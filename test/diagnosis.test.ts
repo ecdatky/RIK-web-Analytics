@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { diagnose } from "../src/diagnosis";
+import { siteRole } from "../src/sites";
 import { resolveRanges } from "../src/dates";
 import { DEMO_SITES, demoAds, demoGa4, demoMeta } from "../src/demo";
 import type { AdsReport, SiteReport } from "../src/types";
@@ -25,7 +26,7 @@ function demoReport(siteIndex = 0): SiteReport {
 describe("diagnose", () => {
   it("診断日時・対象期間を記録し、優先度の高い順に並べる", () => {
     const now = new Date("2026-10-21T01:23:00Z");
-    const d = diagnose(demoReport(), now);
+    const d = diagnose(demoReport(), DEMO_SITES[0], now);
     expect(d.checkedAt).toBe(now.toISOString());
     expect(d.period).toEqual(current);
     expect([d.range, d.compare]).toEqual(["28d", "prev"]);
@@ -70,7 +71,7 @@ describe("diagnose", () => {
     delete r.ads;
     delete r.meta;
     const d = diagnose(r);
-    expect(d.items.every((i) => i.area === "ga4")).toBe(true);
+    expect(d.items.every((i) => i.area === "ga4" || i.area === "measure")).toBe(true);
   });
 
   it("Meta広告の行き先がPeatixなら、ピクセル未設置や成果0のキャンペーンとして扱わない", () => {
@@ -91,5 +92,66 @@ describe("diagnose", () => {
 
     m.destinations = [{ host: "rikcorp.jp", spend: 1000, clicks: 20, ads: 1, example: "https://www.rikcorp.jp/" }];
     expect(diagnose(r).items.map((i) => i.id)).toContain("measure-meta-pixel");
+  });
+
+  describe("サイトの目的に合わせた判定", () => {
+    it("id・URLからサイトの種類を決め、診断に目的を記録する", () => {
+      expect(siteRole({ id: "corp" })).toBe("corporate");
+      expect(siteRole({ id: "x", url: "https://www.rikcorp.jp/" })).toBe("corporate");
+      expect(siteRole({ id: "product", url: "https://products.rikcorp.jp/" })).toBe("product");
+      expect(siteRole({ id: "x", url: "https://www.rik-support.net/share/" })).toBe("media");
+      expect(siteRole({ id: "corp", role: "media" })).toBe("media");
+      const d = diagnose(demoReport(2), DEMO_SITES[2]);
+      expect(d.role).toBe("media");
+      expect(d.purpose?.kpis[0]).toContain("RIKCADお知らせ");
+    });
+
+    it("コーポレートは問い合わせ0件を優先度高にせず、送客の減少を見る", () => {
+      const r = demoReport(0);
+      const g = r.ga4!;
+      g.totals.keyEvents = { current: 0, previous: 3 };
+      g.linkClicks = [
+        { domain: "products.rikcorp.jp", clicks: { current: 50, previous: 200 } },
+        { domain: "peatix.com", clicks: { current: 30, previous: 30 } },
+      ];
+      g.totals.sessions = { current: 2000, previous: 2000 };
+      const items = diagnose(r, DEMO_SITES[0]).items;
+      const ids = items.map((i) => i.id);
+      expect(ids).not.toContain("ga4-no-keyevents");
+      expect(items.find((i) => i.id === "corp-no-contact")?.severity).toBe("low");
+      expect(ids).toContain("corp-send-down");
+      expect(items.find((i) => i.id === "corp-send-down")!.evidence).toContain("products.rikcorp.jp");
+    });
+
+    it("コーポレートでクリックが1件も無ければ計測の確認をすすめる", () => {
+      const r = demoReport(0);
+      r.ga4!.linkClicks = [];
+      expect(diagnose(r, DEMO_SITES[0]).items.map((i) => i.id)).toContain("measure-corp-link-clicks");
+    });
+
+    it("RIKシェアはキーイベントを見ず、RIKCADお知らせ経由の閲覧を見る", () => {
+      const r = demoReport(2);
+      const g = r.ga4!;
+      g.totals.keyEvents = { current: 0, previous: 0 };
+      g.rikcadNews = {
+        sessions: { current: 300, previous: 1000 },
+        activeUsers: { current: 100, previous: 300 },
+        engagementRate: { current: 0.5, previous: 0.5 },
+      };
+      const ids = diagnose(r, DEMO_SITES[2]).items.map((i) => i.id);
+      expect(ids).not.toContain("ga4-no-keyevents");
+      expect(ids).not.toContain("ga4-cvr-down");
+      expect(ids).not.toContain("ga4-mobile-share");
+      expect(ids).toContain("media-news-down");
+
+      g.rikcadNews.sessions = { current: 0, previous: 1000 };
+      expect(diagnose(r, DEMO_SITES[2]).items.map((i) => i.id)).toContain("measure-rikcad-news");
+    });
+
+    it("製品サイトは今までどおり問い合わせ・資料請求で判定する", () => {
+      const r = demoReport(1);
+      r.ga4!.totals.keyEvents = { current: 0, previous: 5 };
+      expect(diagnose(r, DEMO_SITES[1]).items.map((i) => i.id)).toContain("ga4-no-keyevents");
+    });
   });
 });
