@@ -79,7 +79,19 @@ export interface Ga4Report {
   linkClicks?: { domain: string; clicks: Kpi }[];
   /** RIKCADお知らせ（medium=rss）経由の訪問。RIKシェアのみ。旧データには無い */
   rikcadNews?: { sessions: Kpi; activeUsers: Kpi; engagementRate: Kpi };
+  /** ChatGPT・Gemini などAIサービスの回答のリンクから来た訪問（GA4の参照元で判定）。旧データには無い */
+  aiReferrals?: AiReferrals;
   today: { activeUsers: number; sessions: number; keyEvents: number };
+}
+
+export interface AiReferrals {
+  sessions: Kpi;
+  /** 複数のAIから来た人は1人と数える */
+  activeUsers: Kpi;
+  engagementRate: Kpi;
+  keyEvents: Kpi;
+  /** AIサービス別。訪問の多い順。engagementRate・keyEvents は対象期間 */
+  services: { name: string; sessions: Kpi; engagementRate: number; keyEvents: number; sources: string[] }[];
 }
 
 export interface AdsKpis {
