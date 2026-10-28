@@ -217,3 +217,14 @@ export async function refreshDiagnosis(env: Env, site: SiteConfig, range: RangeK
   await saveDiagnosis(env, d);
   return d;
 }
+
+// ---- 質問 ----
+
+/** その人の、この1時間の質問回数を1つ増やして返す */
+export async function countQuestion(env: Env, email: string): Promise<number> {
+  const hour = Math.floor(Date.now() / 3_600_000);
+  const key = `ask-count:v1:${email}:${hour}`;
+  const n = Number((await env.CACHE.get(key)) ?? 0) + 1;
+  await env.CACHE.put(key, String(n), { expirationTtl: 2 * 3600 });
+  return n;
+}

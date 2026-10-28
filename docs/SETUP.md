@@ -105,7 +105,7 @@ Facebook・Instagram 広告のデータは Meta Marketing API（Insights API）�
 
 ## 6. Claude API キー
 
-[Claude Console](https://platform.claude.com/) で API キーを発行します。AIアドバイスは毎朝7時に各サイト1回と、画面の「作り直す」ボタンで生成されます（同じサイトは5分以内に再生成しない制限あり）。
+[Claude Console](https://platform.claude.com/) で API キーを発行します。AIアドバイスは毎朝7時に各サイト1回と、画面の「作り直す」ボタンで生成されます（同じサイトは5分以内に再生成しない制限あり）。画面右下の「AIに質問」でも同じキーを使います（1人1時間60回まで）。
 
 ## 7. シークレット登録とデプロイ
 
