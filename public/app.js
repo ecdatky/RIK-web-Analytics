@@ -1466,6 +1466,7 @@ function renderDiagnosis(d, siteId) {
           <p class="diag-evidence">${esc(i.evidence)}</p>
           <div class="diag-action"><b>次にできる行動</b><p>${esc(i.action)}</p></div>
           <p class="diag-where"><b>操作する場所</b>${esc(i.where)}</p>
+          <button type="button" class="ask-link" data-ask="${esc(`診断の「${i.title}」について、原因と対応の進め方をもう少し詳しく教えて`)}">この点をAIに質問する</button>
         </div>
       </li>`,
     )
@@ -1621,18 +1622,185 @@ function render() {
   clearTimeout(state.advicePoll);
   destroyCharts();
   renderTabs();
+  renderAsk();
   document.querySelectorAll("[data-range]").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.range === state.range)));
   document.querySelectorAll("[data-compare]").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.compare === state.compare)));
   if (state.tab === "summary" || !state.sites.some((s) => s.id === state.tab)) {
     state.tab = "summary";
     renderTabs();
+    renderAsk();
     return renderSummary();
   }
   return renderSite(state.tab);
 }
 
+// ---------- AIに質問 ----------
+// 会話は画面（サイト×期間×比較）ごとにこのページの中だけで持ち、質問のたびに会話ごとサーバーへ送る。
+
+const askThreads = new Map();
+const askKey = () => `${state.tab}|${state.range}|${state.compare}`;
+const askThread = () => {
+  if (!askThreads.has(askKey())) askThreads.set(askKey(), []);
+  return askThreads.get(askKey());
+};
+const askOpen = () => !$("#ask").hidden;
+
+const ASK_SUGGEST = {
+  summary: ["3サイトで今いちばん手を打つべきところは？", "「いまの状況」の判定はどう決めているの？", "サイトごとに判定が違うのはなぜ？"],
+  corporate: ["製品サイトへの送客は増えている？", "よく見られているページから何が分かる？", "問い合わせが少ないのは問題？"],
+  product: ["問い合わせ・資料請求が増減した原因は？", "広告費の使い方で見直すべき点は？", "診断でいちばん優先すべき項目は？"],
+  media: ["RIKCADお知らせ経由の閲覧は増えている？", "よく読まれた記事の傾向は？", "エンゲージメント率ってどういう意味？"],
+};
+
+/** AIの回答の簡単な書式（**太字** と「- 」の箇条書き、段落）だけを、エスケープしてから当てる */
+function askMarkdown(text) {
+  const inline = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  const out = [];
+  let list = null;
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    const item = /^[-・*]\s+(.*)$/.exec(line);
+    if (item) {
+      (list ??= []).push(`<li>${inline(item[1])}</li>`);
+      continue;
+    }
+    if (list) out.push(`<ul>${list.join("")}</ul>`), (list = null);
+    if (line) out.push(`<p>${inline(line.replace(/^#+\s*/, ""))}</p>`);
+  }
+  if (list) out.push(`<ul>${list.join("")}</ul>`);
+  return out.join("");
+}
+
+function askScopeText() {
+  const period = `${RANGE_LABEL[state.range]}・${COMPARE_NAME[state.compare]}と比較`;
+  if (state.tab === "summary") return `全サイト（${period}）のデータをもとに答えます`;
+  const site = state.sites.find((s) => s.id === state.tab);
+  return `${site?.name ?? ""}（${period}）のデータをもとに答えます`;
+}
+
+function renderAsk() {
+  if (!askOpen()) return;
+  $("#ask-scope").textContent = askScopeText();
+  const thread = askThread();
+  const log = $("#ask-log");
+  const role = state.tab === "summary" ? "summary" : state.sites.find((s) => s.id === state.tab)?.role ?? "product";
+  const intro = `<div class="ask-intro"><p>画面の見方や、気になる数字の理由などを質問できます。</p><div class="ask-chips">${(ASK_SUGGEST[role] ?? ASK_SUGGEST.product)
+    .map((q) => `<button type="button" data-ask="${esc(q)}">${esc(q)}</button>`)
+    .join("")}</div></div>`;
+  log.innerHTML =
+    (thread.length ? "" : intro) +
+    thread
+      .map((m) =>
+        m.error
+          ? `<div class="ask-msg err">${esc(m.error)}</div>`
+          : m.role === "user"
+            ? `<div class="ask-msg user">${esc(m.content)}</div>`
+            : `<div class="ask-msg ai${m.content ? "" : " pending"}">${askMarkdown(m.content)}</div>`,
+      )
+      .join("");
+  log.scrollTop = log.scrollHeight;
+  const busy = thread.some((m) => m.pending);
+  $("#ask-send").disabled = busy;
+  $("#ask-send").textContent = busy ? "回答中…" : "送信";
+}
+
+function openAsk(question) {
+  $("#ask").hidden = false;
+  $("#ask-open").setAttribute("aria-expanded", "true");
+  renderAsk();
+  if (question) return sendQuestion(question);
+  $("#ask-input").focus();
+}
+
+function closeAsk() {
+  $("#ask").hidden = true;
+  $("#ask-open").setAttribute("aria-expanded", "false");
+}
+
+/** 質問を送り、回答（data: JSON の行）が届くたびに書き足す */
+async function sendQuestion(text) {
+  const q = text.trim();
+  const thread = askThread();
+  if (!q || thread.some((m) => m.pending)) return;
+  const view = { site: state.tab, range: state.range, compare: state.compare };
+  const messages = thread.filter((m) => !m.error && m.content).map(({ role, content }) => ({ role, content }));
+  messages.push({ role: "user", content: q });
+  thread.push({ role: "user", content: q });
+  const answer = { role: "assistant", content: "", pending: true };
+  thread.push(answer);
+  $("#ask-input").value = "";
+  const show = () => thread === askThread() && renderAsk();
+  show();
+  try {
+    const res = await fetch("/api/ask", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...view, messages }),
+    });
+    if (!(res.headers.get("content-type") || "").includes("text/event-stream")) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `HTTP ${res.status}`);
+    }
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const events = buf.split("\n\n");
+      buf = events.pop();
+      for (const ev of events) {
+        const line = ev.split("\n").find((l) => l.startsWith("data: "));
+        if (!line) continue;
+        const msg = JSON.parse(line.slice(6));
+        if (msg.type === "text") {
+          answer.content += msg.text;
+          show();
+        } else if (msg.type === "error") {
+          throw new Error(msg.error);
+        } else if (msg.type === "done") {
+          answer.pending = false;
+          return show();
+        }
+      }
+    }
+    if (!answer.content) throw new Error("回答が途中で止まりました。もう一度お試しください。");
+  } catch (err) {
+    // 回答が途中まで届いていれば残し、何も無ければエラーに置き換える
+    if (!answer.content) thread.splice(thread.indexOf(answer), 1, { error: `回答できませんでした：${err.message}` });
+    else thread.push({ error: `回答が途中で止まりました：${err.message}` });
+  } finally {
+    answer.pending = false;
+    show();
+  }
+}
+
+$("#ask-open").addEventListener("click", () => openAsk());
+$("#ask-close").addEventListener("click", closeAsk);
+$("#ask-reset").addEventListener("click", () => {
+  if (askThread().some((m) => m.pending)) return;
+  askThreads.delete(askKey());
+  renderAsk();
+  $("#ask-input").focus();
+});
+$("#ask-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  sendQuestion($("#ask-input").value);
+});
+$("#ask-input").addEventListener("keydown", (e) => {
+  // 日本語入力の変換確定の Enter では送らない
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
+    e.preventDefault();
+    sendQuestion(e.target.value);
+  }
+  if (e.key === "Escape") closeAsk();
+});
+
 // ---------- events ----------
 document.addEventListener("click", async (e) => {
+  const ask = e.target.closest("[data-ask]");
+  if (ask) return openAsk(ask.dataset.ask);
   const tab = e.target.closest("[data-tab]");
   if (tab) {
     state.tab = tab.dataset.tab;

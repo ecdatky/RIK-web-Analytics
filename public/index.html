@@ -47,6 +47,27 @@
     集計期間は昨日までの完了日です。「直前と比較」は同じ日数のすぐ前の期間、「前年と比較」は同じ日付の1年前と比べます。「今日（速報）」は途中値です。
   </footer>
 
+  <button id="ask-open" class="ask-fab" type="button" aria-controls="ask" aria-expanded="false" title="画面の見方や気になるデータについて、AIに質問できます">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/><path d="M9.6 9.5a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2.2-2.4 3.6"/><path d="M12 17h.01"/></svg>
+    <span>AIに質問</span>
+  </button>
+  <aside id="ask" class="ask" role="dialog" aria-label="AIに質問" hidden>
+    <header class="ask-head">
+      <div>
+        <h2>AIに質問</h2>
+        <p id="ask-scope" class="muted small"></p>
+      </div>
+      <button id="ask-reset" class="btn" type="button" title="この画面での会話を消して、最初から質問します">新しい会話</button>
+      <button id="ask-close" class="ask-x" type="button" aria-label="閉じる">×</button>
+    </header>
+    <div id="ask-log" class="ask-log" aria-live="polite"></div>
+    <form id="ask-form" class="ask-form">
+      <textarea id="ask-input" rows="2" maxlength="1000" placeholder="例：先週より問い合わせが減ったのはなぜ？（Enterで送信、Shift+Enterで改行）"></textarea>
+      <button id="ask-send" class="btn btn-primary" type="submit">送信</button>
+    </form>
+    <p class="ask-note muted small">表示中のサイト・期間のデータと診断をもとにAIが答えます。会話は保存されず、画面を閉じると消えます。</p>
+  </aside>
+
   <script src="/app.js" type="module"></script>
 </body>
 </html>

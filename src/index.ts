@@ -3,11 +3,13 @@ import { siteProfile } from "./sites";
 import { isCompareKey, isRangeKey } from "./dates";
 import { verifyAccess } from "./access";
 import { fetchRealtime } from "./google/ga4";
+import { answerQuestion, buildAskContext, normalizeTurns, type AskSiteContext } from "./ai/ask";
 import {
   adviceIsFromToday,
   getAdvice,
   getAdviceJob,
   getCachedReport,
+  countQuestion,
   getDiagnosis,
   hasGoogleAds,
   isDemo,
@@ -54,6 +56,63 @@ function adviceStream(env: Env, ctx: ExecutionContext, site: SiteConfig, range: 
         return send({ type: "error", error: errMsg(e) });
       },
     )
+    .finally(() => writer.close().catch(() => undefined));
+  ctx.waitUntil(work);
+  return new Response(readable, {
+    headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store" },
+  });
+}
+
+// 質問は1人あたり1時間にこの回数まで（API費用の暴走防止）
+const ASK_LIMIT_PER_HOUR = 60;
+
+/** 質問に答える。表示中のサイト（サマリーなら全サイト）のデータ・診断・ひとことを文脈にし、回答をイベントストリームで少しずつ返す */
+async function askStream(request: Request, env: Env, ctx: ExecutionContext, sites: SiteConfig[], email: string): Promise<Response> {
+  const body = (await request.json().catch(() => null)) as { site?: string; range?: string; compare?: string; messages?: unknown } | null;
+  if (!body) return json({ error: "リクエストが不正です" }, 400);
+  const tab = body.site === "summary" ? "summary" : body.site;
+  const scope = tab === "summary" ? sites : sites.filter((s) => s.id === tab);
+  if (!scope.length) return json({ error: "site が不正です" }, 400);
+  const range: RangeKey = isRangeKey(body.range ?? null) ? (body.range as RangeKey) : "28d";
+  const compare: CompareKey = isCompareKey(body.compare ?? null) ? (body.compare as CompareKey) : "prev";
+  let turns;
+  try {
+    turns = normalizeTurns(body.messages);
+  } catch (e) {
+    return json({ error: errMsg(e) }, 400);
+  }
+  if ((await countQuestion(env, email)) > ASK_LIMIT_PER_HOUR) {
+    return json({ error: `質問は1時間に${ASK_LIMIT_PER_HOUR}回までです。少し時間をおいてからお試しください。` }, 429);
+  }
+
+  const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = writable.getWriter();
+  const enc = new TextEncoder();
+  const send = (o: unknown) => writer.write(enc.encode(`data: ${JSON.stringify(o)}\n\n`)).catch(() => undefined);
+  const work = (async () => {
+    const contexts: AskSiteContext[] = await Promise.all(
+      scope.map(async (site) => {
+        const report = (await getCachedReport(env, site.id, range, compare)) ?? (await refreshReport(env, site, range, compare).catch(() => null));
+        const [diagnosis, advice] = await Promise.all([
+          report ? getDiagnosis(env, site, range, compare).catch(() => null) : null,
+          getAdvice(env, site.id, range, compare).catch(() => null),
+        ]);
+        return { site, report, diagnosis, advice };
+      }),
+    );
+    if (isDemo(env) && !env.ANTHROPIC_API_KEY) {
+      await send({ type: "text", text: "（デモ表示）AIの設定が無いため、サンプルの回答です。実際の画面では、表示中のサイト・期間のデータをもとにAIが答えます。" });
+      return send({ type: "done" });
+    }
+    const context = buildAskContext({ tab: tab!, range, compare }, contexts);
+    const { model } = await answerQuestion(env, context, turns, (text) => send({ type: "text", text }));
+    console.log("ask", email, tab, range, compare, turns[turns.length - 1].content.slice(0, 200));
+    return send({ type: "done", model });
+  })()
+    .catch((e) => {
+      console.error("ask", e);
+      return send({ type: "error", error: errMsg(e) });
+    })
     .finally(() => writer.close().catch(() => undefined));
   ctx.waitUntil(work);
   return new Response(readable, {
@@ -142,6 +201,10 @@ async function handleApi(request: Request, env: Env, ctx: ExecutionContext, url:
       const [advice, job] = await Promise.all([getAdvice(env, site.id, range, compare), getAdviceJob(env, site.id, range, compare)]);
       return json({ advice, job });
     }
+
+    case "/api/ask":
+      if (request.method !== "POST") return json({ error: "POST で送ってください" }, 405);
+      return askStream(request, env, ctx, sites, email);
 
     case "/api/image":
       return proxyImage(url.searchParams.get("u"));

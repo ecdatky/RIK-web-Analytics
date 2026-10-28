@@ -204,7 +204,7 @@ a { color: var(--primary); }
 .tabs button[aria-selected="true"] { background: var(--text-primary); border-color: var(--text-primary); color: var(--surface-1); }
 
 .view { padding: 20px 28px 48px; max-width: 1400px; margin: 0 auto; display: grid; gap: 18px; }
-.foot { padding: 0 28px 32px; max-width: 1400px; margin: 0 auto; }
+.foot { padding: 0 28px 88px; max-width: 1400px; margin: 0 auto; }
 
 /* ---------- layout ---------- */
 .card { background: var(--surface-1); border: 0; border-radius: var(--radius); padding: 20px; min-width: 0; box-shadow: var(--shadow); }
@@ -647,3 +647,59 @@ h3.sub { margin: 4px 0 -6px; color: var(--text-muted); font-size: 12px; letter-s
 .serp-url b { font-weight: 700; color: var(--text-primary); margin-right: 6px; }
 .serp-title { color: #1a0dab; font-size: 14px; font-weight: 600; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .serp-desc { color: var(--text-secondary); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* ---------- AIに質問 ---------- */
+.ask-fab {
+  position: fixed; right: 20px; bottom: 20px; z-index: 40;
+  display: inline-flex; align-items: center; gap: 8px;
+  border: none; border-radius: 999px; padding: 12px 18px;
+  background: var(--primary); color: var(--on-primary); font: inherit; font-weight: 700; font-size: 14px;
+  box-shadow: 0 4px 16px rgba(18, 48, 32, 0.22); cursor: pointer; transition: background 0.15s, transform 0.12s;
+}
+.ask-fab:hover { background: var(--primary-strong); }
+.ask-fab:active { transform: scale(0.96); }
+.ask-fab[aria-expanded="true"] { display: none; }
+.ask {
+  position: fixed; right: 20px; bottom: 20px; z-index: 41;
+  width: min(420px, calc(100vw - 40px)); height: min(640px, calc(100vh - 40px));
+  display: flex; flex-direction: column;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: 0 10px 40px rgba(18, 48, 32, 0.22);
+}
+.ask[hidden] { display: none; }
+.ask-head { display: flex; align-items: flex-start; gap: 8px; padding: 14px 14px 10px 18px; border-bottom: 1px solid var(--border); }
+.ask-head > div { flex: 1; min-width: 0; }
+.ask-head h2 { margin: 0; font-size: 16px; }
+.ask-head p { margin: 2px 0 0; }
+.ask-x { border: none; background: none; color: var(--text-secondary); font-size: 22px; line-height: 1; padding: 4px 6px; cursor: pointer; border-radius: 8px; }
+.ask-x:hover { background: var(--surface-3); }
+.ask-log { flex: 1; overflow-y: auto; padding: 14px 18px; display: flex; flex-direction: column; gap: 10px; }
+.ask-msg { max-width: 92%; padding: 9px 13px; border-radius: 14px; font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
+.ask-msg p { margin: 0 0 6px; }
+.ask-msg p:last-child, .ask-msg ul:last-child { margin-bottom: 0; }
+.ask-msg ul { margin: 0 0 6px; padding-left: 1.2em; }
+.ask-msg.user { align-self: flex-end; background: var(--primary-soft); border-bottom-right-radius: 4px; white-space: pre-wrap; }
+.ask-msg.ai { align-self: flex-start; background: var(--surface-2); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+.ask-msg.ai.pending::after { content: "考えています…"; color: var(--text-muted); font-size: 13px; }
+.ask-msg.err { align-self: stretch; max-width: none; background: var(--critical-bg); color: var(--critical); }
+.ask-intro { font-size: 13px; color: var(--text-secondary); }
+.ask-intro p { margin: 0 0 8px; }
+.ask-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.ask-chips button {
+  border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary); font: inherit; font-size: 13px;
+  padding: 6px 12px; border-radius: 999px; cursor: pointer; text-align: left;
+}
+.ask-chips button:hover { border-color: var(--primary); background: var(--primary-soft); }
+.ask-form { display: flex; gap: 8px; align-items: flex-end; padding: 10px 14px 4px; border-top: 1px solid var(--border); }
+.ask-form textarea {
+  flex: 1; resize: none; font: inherit; font-size: 14px; color: var(--text-primary); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; max-height: 140px;
+}
+.ask-form textarea:focus { outline: 2px solid color-mix(in srgb, var(--primary) 45%, transparent); border-color: var(--primary); }
+.ask-note { margin: 0; padding: 0 14px 10px; }
+.ask-link { border: none; background: none; padding: 0; margin-top: 8px; color: var(--primary); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.ask-link:hover { text-decoration: underline; }
+@media (max-width: 600px) {
+  .ask-fab { right: 16px; bottom: 16px; padding: 11px 16px; }
+  .ask { right: 0; bottom: 0; width: 100vw; height: 85vh; height: 85dvh; border-radius: var(--radius) var(--radius) 0 0; }
+}

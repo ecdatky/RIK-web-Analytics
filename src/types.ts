@@ -12,6 +12,7 @@ export interface Env {
   META_API_VERSION?: string;
   CACHE_TTL_SECONDS?: string;
   ADVICE_MODEL?: string;
+  ASK_MODEL?: string; // 質問への回答に使うモデル。未設定なら ADVICE_MODEL と同じ
 
   // secrets
   GOOGLE_SERVICE_ACCOUNT_JSON?: string;
