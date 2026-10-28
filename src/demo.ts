@@ -118,6 +118,7 @@ export function demoGa4(site: SiteConfig, current: DateRange, previous: DateRang
             engagementRate: k(0.52, 0.55),
           }
         : undefined,
+    aiReferrals: demoAiReferrals(site, sessions, prevSessions),
     today: { activeUsers: Math.round(base * 0.4), sessions: Math.round(base * 0.5), keyEvents: Math.round(base * 0.004) },
   };
 }
@@ -358,5 +359,33 @@ export function demoAdvice(site: SiteConfig, range: RangeKey, compare: CompareKe
           ],
         }
       : null,
+  };
+}
+
+function demoAiReferrals(site: SiteConfig, sessions: number, prevSessions: number): NonNullable<Ga4Report["aiReferrals"]> {
+  const share = site.id === "product" ? 0.012 : site.id === "corp" ? 0.008 : 0.003;
+  const split: [string, string, number, number][] = [
+    ["ChatGPT", "chatgpt.com", 0.62, 0.55],
+    ["Gemini", "gemini.google.com", 0.14, 0.12],
+    ["Perplexity", "perplexity.ai", 0.11, 0.15],
+    ["Copilot", "copilot.microsoft.com", 0.09, 0.13],
+    ["Claude", "claude.ai", 0.04, 0.05],
+  ];
+  const cur = Math.round(sessions * share);
+  const prev = Math.round(prevSessions * share * 0.8);
+  const services = split.map(([name, source, a, b]) => ({
+    name,
+    sessions: { current: Math.round(cur * a), previous: Math.round(prev * b) },
+    engagementRate: 0.62,
+    keyEvents: site.id === "product" ? Math.round(cur * a * 0.03) : 0,
+    sources: [source],
+  }));
+  const sum = (p: "current" | "previous") => services.reduce((s, x) => s + x.sessions[p], 0);
+  return {
+    sessions: { current: sum("current"), previous: sum("previous") },
+    activeUsers: { current: Math.round(sum("current") * 0.85), previous: Math.round(sum("previous") * 0.85) },
+    engagementRate: { current: 0.62, previous: 0.58 },
+    keyEvents: { current: services.reduce((s, x) => s + x.keyEvents, 0), previous: site.id === "product" ? 1 : 0 },
+    services,
   };
 }

@@ -112,6 +112,7 @@ const GLOSSARY = [
   ["予算による損失", "予算が足りずに広告を出せなかった割合。"],
   ["広告ランクによる損失", "入札額や広告の質が足りずに出せなかった割合。"],
   ["リーチ", "広告を見た人の数。"],
+  ["AIからのアクセス", "ChatGPT・Gemini などAIの回答に載ったリンクから来た訪問。GA4の参照元で判定するため、AIのクローラー（bot）やGoogleのAIによる概要からの訪問は含みません。"],
   ["フリークエンシー", "1人あたりに広告が表示された回数。3回を超えると見飽きて効率が落ちやすくなります。"],
 ];
 const BY_LENGTH = [...GLOSSARY].sort((a, b) => b[0].length - a[0].length);
@@ -840,6 +841,8 @@ function renderGa4(g) {
     </div>
   </div>
 
+  ${aiBlock(g)}
+
   <div class="grid grid-2">
     <div class="card"><h3>よく見られているページ</h3><div class="table-wrap"><table>
       <thead><tr><th>ページ</th><th class="r">表示回数</th><th class="r">ユーザー</th><th class="r">エンゲージ率</th></tr></thead>
@@ -851,6 +854,37 @@ function renderGa4(g) {
     </table></div></div>
   </div>
   </section>`;
+}
+
+/** ChatGPT・Gemini などAIの回答のリンクから来た訪問（GA4の参照元で判定） */
+function aiBlock(g) {
+  const ai = g.aiReferrals;
+  if (!ai) return "";
+  const t = g.totals;
+  const share = ratio(ai.sessions.current, t.sessions.current);
+  const sharePrev = ratio(ai.sessions.previous, t.sessions.previous);
+  const list = ai.services.filter((x) => x.sessions.current || x.sessions.previous);
+  const body = list.length
+    ? `<div class="tiles">
+      ${tile("AIからの訪問", fmtInt(ai.sessions.current), delta(ai.sessions.current, ai.sessions.previous), "ChatGPT・Gemini などAIの回答に載ったリンクから来た訪問（セッション）の数。")}
+      ${tile("全訪問に占める割合", fmtPct(share), delta(share, sharePrev), "サイトへの訪問全体のうち、AIから来た訪問の割合。")}
+      ${tile("AIから来た人", fmtInt(ai.activeUsers.current), delta(ai.activeUsers.current, ai.activeUsers.previous), "AIから来た人の数。複数のAIから来た人も1人と数えます。")}
+      ${tile("エンゲージメント率", fmtPct(ai.engagementRate.current), delta(ai.engagementRate.current, ai.engagementRate.previous))}
+      ${tile("キーイベント", fmtInt(ai.keyEvents.current), delta(ai.keyEvents.current, ai.keyEvents.previous), "AIから来た訪問のうち、問い合わせ・資料請求など成果につながった数。")}
+    </div>
+    <h3 style="margin-top:16px">どのAIから来ているか</h3>
+    ${bars(
+      list.map((x) => [
+        x.name,
+        x.sessions.current,
+        `${fmtInt(x.sessions.current)}<span class="muted small"> / ${state.compare === "yoy" ? "前年" : "直前"} ${fmtInt(x.sessions.previous)}</span>`,
+      ]),
+    )}`
+    : `<p class="muted">対象期間と${COMPARE_NAME[state.compare]}に、AIから来た訪問はありませんでした。</p>`;
+  return `<div class="card" id="ai-referrals"><h3>AIからのアクセス</h3>
+    ${body}
+    <p class="muted small" style="margin:12px 0 0">ChatGPT・Gemini・Perplexity・Copilot・Claude などAIの回答に載ったリンクから来た訪問を、GA4の参照元（chatgpt.com など）で数えています。AIがサイトを読みに来るクローラー（bot）はGA4に記録されないため含みません。GoogleのAIによる概要・AIモードから来た訪問は通常の検索（google / organic）と区別できず、アプリから開いて参照元が残らない訪問は「direct」に入るため、実際にAI経由で来た人はこれより多いと見てください。</p>
+  </div>`;
 }
 
 function bars(items) {
@@ -1648,7 +1682,7 @@ const askOpen = () => !$("#ask").hidden;
 const ASK_SUGGEST = {
   summary: ["3サイトで今いちばん手を打つべきところは？", "「いまの状況」の判定はどう決めているの？", "サイトごとに判定が違うのはなぜ？"],
   corporate: ["製品サイトへの送客は増えている？", "よく見られているページから何が分かる？", "問い合わせが少ないのは問題？"],
-  product: ["問い合わせ・資料請求が増減した原因は？", "広告費の使い方で見直すべき点は？", "診断でいちばん優先すべき項目は？"],
+  product: ["問い合わせ・資料請求が増減した原因は？", "広告費の使い方で見直すべき点は？", "診断でいちばん優先すべき項目は？", "AIからのアクセスはどのくらい来ている？"],
   media: ["RIKCADお知らせ経由の閲覧は増えている？", "よく読まれた記事の傾向は？", "エンゲージメント率ってどういう意味？"],
 };
 

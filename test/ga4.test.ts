@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupChannels, groupLinkClicks, RIKCAD_NEWS_LABEL, rikcadNewsTotals } from "../src/google/ga4";
+import { aiServiceOf, groupAiReferrals, groupChannels, groupLinkClicks, RIKCAD_NEWS_LABEL, rikcadNewsTotals } from "../src/google/ga4";
 import { hasRikcadNews } from "../src/service";
 
 const row = (dims: string[], mets: number[]) => ({
@@ -61,5 +61,42 @@ describe("目的に合わせた指標", () => {
     });
     expect(out.sessions).toEqual({ current: 900, previous: 800 });
     expect(out.engagementRate).toEqual({ current: 0.55, previous: 0.5 });
+  });
+});
+
+describe("AIからのアクセス", () => {
+  it("参照元をAIサービスに分ける（utm_source の値も含む）", () => {
+    expect(aiServiceOf("chatgpt.com")).toBe("ChatGPT");
+    expect(aiServiceOf("chat.openai.com")).toBe("ChatGPT");
+    expect(aiServiceOf("perplexity.ai")).toBe("Perplexity");
+    expect(aiServiceOf("www.perplexity.ai")).toBe("Perplexity");
+    expect(aiServiceOf("gemini.google.com")).toBe("Gemini");
+    expect(aiServiceOf("copilot.microsoft.com")).toBe("Copilot");
+    expect(aiServiceOf("claude.ai")).toBe("Claude");
+    expect(aiServiceOf("google")).toBeNull();
+    expect(aiServiceOf("youtube.com")).toBeNull();
+    expect(aiServiceOf("claude-shop.example.jp")).toBeNull();
+  });
+
+  it("AI別・期間別に集計し、ユーザー数は参照元で分けない合計を使う", () => {
+    const out = groupAiReferrals(
+      {
+        dimensionHeaders: [{ name: "sessionSource" }, { name: "dateRange" }],
+        rows: [
+          row(["chatgpt.com", "current"], [30, 18, 2, 25]),
+          row(["chat.openai.com", "current"], [5, 3, 0, 5]),
+          row(["chatgpt.com", "previous"], [20, 10, 1, 18]),
+          row(["perplexity.ai", "current"], [10, 6, 0, 9]),
+          row(["claude-shop.example.jp", "current"], [99, 99, 9, 99]),
+        ],
+      },
+      { dimensionHeaders: [{ name: "dateRange" }], rows: [row(["current"], [36]), row(["previous"], [18])] },
+    );
+    expect(out.sessions).toEqual({ current: 45, previous: 20 });
+    expect(out.activeUsers).toEqual({ current: 36, previous: 18 });
+    expect(out.keyEvents).toEqual({ current: 2, previous: 1 });
+    expect(out.engagementRate.current).toBeCloseTo(27 / 45);
+    expect(out.services.map((s) => s.name)).toEqual(["ChatGPT", "Perplexity"]);
+    expect(out.services[0]).toMatchObject({ sessions: { current: 35, previous: 20 }, sources: ["chat.openai.com", "chatgpt.com"] });
   });
 });

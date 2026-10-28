@@ -1,4 +1,4 @@
-import type { DateRange, Env, Ga4Report } from "../types";
+import type { DateRange, Env, Ga4Report, Kpi } from "../types";
 import { eachDay, todayJst } from "../dates";
 import { serviceAccountToken } from "./auth";
 
@@ -112,6 +112,79 @@ export function rikcadNewsTotals(report: Report): NonNullable<Ga4Report["rikcadN
   return out;
 }
 
+/**
+ * AIサービスの参照元（sessionSource）。AIの回答に載ったリンクから来た訪問は、参照元のドメインか
+ * AIが付ける utm_source（chatgpt.com など）で見分けられる。上から順に判定する
+ */
+export const AI_SERVICES: { name: string; pattern: RegExp }[] = [
+  { name: "ChatGPT", pattern: /(^|\.)(chatgpt\.com|chat\.openai\.com|openai\.com)$|^chatgpt$|^openai$/ },
+  { name: "Gemini", pattern: /(^|\.)(gemini\.google\.com|bard\.google\.com)$|^gemini$/ },
+  { name: "Perplexity", pattern: /(^|\.)perplexity\.ai$|^perplexity$/ },
+  { name: "Copilot", pattern: /(^|\.)(copilot\.microsoft\.com|copilot\.cloud\.microsoft|copilot\.com)$|^copilot$/ },
+  { name: "Claude", pattern: /(^|\.)claude\.ai$|^claude$/ },
+  { name: "DeepSeek", pattern: /(^|\.)deepseek\.com$|^deepseek$/ },
+  { name: "Grok", pattern: /(^|\.)(grok\.com|x\.ai)$|^grok$/ },
+  { name: "Meta AI", pattern: /(^|\.)meta\.ai$/ },
+  { name: "Le Chat（Mistral）", pattern: /(^|\.)mistral\.ai$/ },
+  { name: "Felo", pattern: /(^|\.)felo\.ai$/ },
+  { name: "Genspark", pattern: /(^|\.)genspark\.ai$/ },
+  { name: "You.com", pattern: /(^|\.)you\.com$/ },
+];
+
+/** GA4に渡す絞り込み。細かい判定は aiServiceOf で行う */
+const AI_SOURCE_FILTER = "chatgpt|openai|gemini|bard\\.google|perplexity|copilot|claude|deepseek|grok|x\\.ai|meta\\.ai|mistral|felo\\.ai|genspark|you\\.com";
+
+/** 参照元がAIサービスならその名前。違えば null */
+export function aiServiceOf(source: string): string | null {
+  const s = source.trim().toLowerCase().replace(/^www\./, "");
+  return AI_SERVICES.find((a) => a.pattern.test(s))?.name ?? null;
+}
+
+const kpi = () => ({ current: 0, previous: 0 });
+
+/** AIサービスから来た訪問を、合計とAI別にまとめる。totalR は参照元で分けない合計（ユーザー数を重複なく数えるため） */
+export function groupAiReferrals(bySourceR: Report, totalR: Report | undefined): NonNullable<Ga4Report["aiReferrals"]> {
+  const services = new Map<string, { sessions: Kpi; engaged: Kpi; keyEvents: Kpi; sources: Set<string> }>();
+  const sum = { sessions: kpi(), activeUsers: kpi(), engaged: kpi(), keyEvents: kpi() };
+  for (const r of bySourceR.rows ?? []) {
+    const source = dim(r, 0);
+    const name = aiServiceOf(source);
+    if (!name) continue;
+    const p = rangeOf(bySourceR, r) === "previous" ? "previous" : "current";
+    const a = services.get(name) ?? { sessions: kpi(), engaged: kpi(), keyEvents: kpi(), sources: new Set<string>() };
+    a.sessions[p] += num(r, 0);
+    a.engaged[p] += num(r, 1);
+    a.keyEvents[p] += num(r, 2);
+    a.sources.add(source.toLowerCase());
+    services.set(name, a);
+    sum.sessions[p] += num(r, 0);
+    sum.activeUsers[p] += num(r, 3);
+    sum.engaged[p] += num(r, 1);
+    sum.keyEvents[p] += num(r, 2);
+  }
+  // 参照元で分けない合計が取れていれば、ユーザー数はそちらを使う（複数のAIから来た人を1人と数える）
+  if (totalR?.rows?.length && services.size) {
+    sum.activeUsers = kpi();
+    for (const r of totalR.rows) sum.activeUsers[rangeOf(totalR, r) === "previous" ? "previous" : "current"] = num(r, 0);
+  }
+  const rate = (e: Kpi, s: Kpi) => ({ current: s.current ? e.current / s.current : 0, previous: s.previous ? e.previous / s.previous : 0 });
+  return {
+    sessions: sum.sessions,
+    activeUsers: sum.activeUsers,
+    engagementRate: rate(sum.engaged, sum.sessions),
+    keyEvents: sum.keyEvents,
+    services: [...services]
+      .map(([name, a]) => ({
+        name,
+        sessions: a.sessions,
+        engagementRate: rate(a.engaged, a.sessions).current,
+        keyEvents: a.keyEvents.current,
+        sources: [...a.sources].sort(),
+      }))
+      .sort((x, y) => y.sessions.current - x.sessions.current || y.sessions.previous - x.sessions.previous),
+  };
+}
+
 export async function fetchGa4(
   env: Env,
   propertyId: string,
@@ -128,7 +201,10 @@ export async function fetchGa4(
     { ...previous, name: "previous" },
   ];
 
-  const [batchA, batchB, batchC] = await Promise.all([
+  const aiFilter = {
+    filter: { fieldName: "sessionSource", stringFilter: { matchType: "PARTIAL_REGEXP", value: AI_SOURCE_FILTER, caseSensitive: false } },
+  };
+  const [batchA, batchB, batchC, batchD] = await Promise.all([
     post<{ reports: Report[] }>(env, `${property}:batchRunReports`, {
       requests: [
         { dateRanges: [{ ...current, name: "current" }, { ...previous, name: "previous" }], metrics: TOTAL_METRICS.map(m) },
@@ -206,6 +282,23 @@ export async function fetchGa4(
       console.error("ga4 purpose metrics", propertyId, e instanceof Error ? e.message : e);
       return undefined;
     }),
+    // AIサービス（ChatGPT・Gemini など）から来た訪問。取れなくても他の数字は出す
+    post<{ reports: Report[] }>(env, `${property}:batchRunReports`, {
+      requests: [
+        {
+          dateRanges: both,
+          dimensions: [d("sessionSource")],
+          metrics: [m("sessions"), m("engagedSessions"), m("keyEvents"), m("activeUsers")],
+          dimensionFilter: aiFilter,
+          orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
+          limit: 100,
+        },
+        { dateRanges: both, metrics: [m("activeUsers")], dimensionFilter: aiFilter },
+      ],
+    }).catch((e) => {
+      console.error("ga4 ai referrals", propertyId, e instanceof Error ? e.message : e);
+      return undefined;
+    }),
   ]);
 
   const [totalsR, dailyR, dailyPrevR, channelR, deviceR] = batchA.reports;
@@ -225,6 +318,7 @@ export async function fetchGa4(
 
   const todayRow = todayR.rows?.[0];
   const [linkR, newsR] = batchC?.reports ?? [];
+  const [aiR, aiTotalR] = batchD?.reports ?? [];
 
   return {
     totals,
@@ -252,6 +346,7 @@ export async function fetchGa4(
     }),
     linkClicks: linkR && groupLinkClicks(linkR),
     rikcadNews: newsR && rikcadNewsTotals(newsR),
+    aiReferrals: aiR && groupAiReferrals(aiR, aiTotalR),
     today: {
       activeUsers: todayRow ? num(todayRow, 0) : 0,
       sessions: todayRow ? num(todayRow, 1) : 0,

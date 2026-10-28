@@ -69,6 +69,8 @@ site.profile に、そのサイトの対象（audience）・目的（purpose）�
 
 - チャネル「RIKCADお知らせ」（参照元/メディア rss / rss）は、RIKCAD起動時に出るお知らせ画面からRIKシェアの記事を開いた訪問です。既存のRIKCADユーザーの再訪なので、新規獲得の流入とは分けて評価します。記事タブを開いたまま30分以上たって再開した分も同じ流入として数えられるため、セッション数は実際のクリック数より多めに出ます。
 
+- ga4.aiReferrals は、ChatGPT・Gemini・Perplexity・Copilot・Claude などAIの回答に載ったリンクから来た訪問（GA4の参照元で判定）です。AIに会社・製品が紹介されているかの目安として扱います。件数が少ないうちは増減を大きく評価せず、どのAIから来ているか、全訪問に占める割合、来た人が読み進めたかを短く触れる程度にします。AIがサイトを読みに来るクローラー（bot）や、Googleの「AIによる概要」・AIモードから来た訪問（google / organic と区別できない）は含まれません。
+
 Google広告では次の観点で効果を判断します。
 - CPA・CVR・ROAS（コンバージョン値がある場合）の変化と、キャンペーン間の差
 - 検索インプレッションシェアと、予算・広告ランクによる損失（取りこぼしの有無と原因）
@@ -139,6 +141,8 @@ function metaDigest(m: MetaReport) {
   };
 }
 
+const ratioOrNull = (x: number, y: number) => (y ? x / y : null);
+
 /** AIに渡す要約。生データをそのまま渡さず、比較しやすい形に絞る */
 export function buildDigest(site: SiteConfig, report: SiteReport) {
   const g = report.ga4;
@@ -168,6 +172,16 @@ export function buildDigest(site: SiteConfig, report: SiteReport) {
       linkClicks: g.linkClicks,
       sendToSites: profile.role === "corporate" && sent ? { domains: sendTo, clicks: sent } : undefined,
       rikcadNews: g.rikcadNews && withChange(g.rikcadNews),
+      // ChatGPT・Gemini などAIの回答のリンクから来た訪問。AIのクローラー（bot）は含まない
+      aiReferrals: g.aiReferrals && {
+        ...withChange({ sessions: g.aiReferrals.sessions, activeUsers: g.aiReferrals.activeUsers, keyEvents: g.aiReferrals.keyEvents }),
+        engagementRate: g.aiReferrals.engagementRate,
+        shareOfSessions: {
+          current: ratioOrNull(g.aiReferrals.sessions.current, g.totals.sessions.current),
+          previous: ratioOrNull(g.aiReferrals.sessions.previous, g.totals.sessions.previous),
+        },
+        services: g.aiReferrals.services.map(({ sources: _s, ...a }) => a),
+      },
     },
     ga4Error: report.ga4Error,
     ads: report.ads && adsDigest(report.ads),
