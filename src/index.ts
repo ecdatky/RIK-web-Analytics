@@ -20,6 +20,7 @@ import {
   refreshDiagnosis,
   refreshReport,
 } from "./service";
+import { NoteError, addNote, applyNotes, deleteNote, listNotes, notesUpdatedAt, updateNote } from "./notes";
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -93,11 +94,16 @@ async function askStream(request: Request, env: Env, ctx: ExecutionContext, site
     const contexts: AskSiteContext[] = await Promise.all(
       scope.map(async (site) => {
         const report = (await getCachedReport(env, site.id, range, compare)) ?? (await refreshReport(env, site, range, compare).catch(() => null));
+        const notes = await listNotes(env, site.id).catch(() => []);
         const [diagnosis, advice] = await Promise.all([
-          report ? getDiagnosis(env, site, range, compare).catch(() => null) : null,
+          report
+            ? getDiagnosis(env, site, range, compare)
+                .then((d) => applyNotes(env, site, d, notes))
+                .catch(() => null)
+            : null,
           getAdvice(env, site.id, range, compare).catch(() => null),
         ]);
-        return { site, report, diagnosis, advice };
+        return { site, report, diagnosis, advice, notes };
       }),
     );
     if (isDemo(env) && !env.ANTHROPIC_API_KEY) {
@@ -193,15 +199,23 @@ async function handleApi(request: Request, env: Env, ctx: ExecutionContext, url:
       if (!site) return json({ error: "site が不正です" }, 400);
       if (request.method === "POST") {
         const current = await getAdvice(env, site.id, range, compare);
-        if (current && Date.now() - Date.parse(current.generatedAt) < ADVICE_COOLDOWN_MS) {
+        // コメントが変わった後の作り直しは、5分以内でも受け付ける
+        const notesAt = notesUpdatedAt(await listNotes(env, site.id));
+        const notesChanged = (notesAt ?? "") !== (current?.notesAt ?? "");
+        if (current && !notesChanged && Date.now() - Date.parse(current.generatedAt) < ADVICE_COOLDOWN_MS) {
           return json({ advice: current, cooldown: true });
         }
         const running = await getAdviceJob(env, site.id, range, compare);
         if (running) return json({ job: running });
         return adviceStream(env, ctx, site, range, compare, email);
       }
-      const [advice, job] = await Promise.all([getAdvice(env, site.id, range, compare), getAdviceJob(env, site.id, range, compare)]);
-      return json({ advice, job });
+      const [advice, job, notes] = await Promise.all([
+        getAdvice(env, site.id, range, compare),
+        getAdviceJob(env, site.id, range, compare),
+        listNotes(env, site.id),
+      ]);
+      // notesAt: いまのコメントの最終更新。ひとことの notesAt と違えば、コメントを踏まえる前のひとこと
+      return json({ advice, job, notesAt: notesUpdatedAt(notes) ?? null });
     }
 
     case "/api/ask":
@@ -213,8 +227,42 @@ async function handleApi(request: Request, env: Env, ctx: ExecutionContext, url:
 
     case "/api/diagnosis": {
       if (!site) return json({ error: "site が不正です" }, 400);
-      if (request.method === "POST") return json({ diagnosis: await refreshDiagnosis(env, site, range, compare) });
-      return json({ diagnosis: await getDiagnosis(env, site, range, compare) });
+      // 保存してある診断は元のまま。担当者のコメントは返す時に重ねる（コメントを直せばすぐ反映される）
+      const d = request.method === "POST" ? await refreshDiagnosis(env, site, range, compare) : await getDiagnosis(env, site, range, compare);
+      return json({ diagnosis: await applyNotes(env, site, d) });
+    }
+
+    case "/api/notes": {
+      if (!site) return json({ error: "site が不正です" }, 400);
+      const id = url.searchParams.get("id") ?? "";
+      // 書き換えは画面からの JSON 送信だけ受け付ける（ほかのサイトのフォームから送らせないため）
+      if (request.method !== "GET" && !request.headers.get("content-type")?.includes("application/json")) {
+        return json({ error: "JSON で送ってください" }, 415);
+      }
+      try {
+        switch (request.method) {
+          case "GET":
+            return json({ notes: await listNotes(env, site.id) });
+          case "POST": {
+            const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+            const note = await addNote(env, site.id, body, email);
+            console.log("note add", email, site.id, note.target);
+            return json({ note });
+          }
+          case "PUT": {
+            const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+            return json({ note: await updateNote(env, site.id, id, body.text, email) });
+          }
+          case "DELETE":
+            await deleteNote(env, site.id, id);
+            console.log("note delete", email, site.id, id);
+            return json({ ok: true });
+        }
+      } catch (e) {
+        if (e instanceof NoteError) return json({ error: e.message }, 400);
+        throw e;
+      }
+      return json({ error: "このメソッドは使えません" }, 405);
     }
   }
   return json({ error: "not found" }, 404);

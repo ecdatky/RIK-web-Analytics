@@ -4,6 +4,7 @@ import * as z from "zod/v4";
 import type { Advice, AdsReport, Env, MetaReport, SiteConfig, SiteReport } from "../types";
 import { COMPARE_LABEL } from "../dates";
 import { gapsInRanges, measurementGaps, siteProfile } from "../sites";
+import { notesDigest, notesUpdatedAt, type SiteNote } from "../notes";
 
 const DEFAULT_MODEL = "claude-opus-5-5";
 
@@ -90,7 +91,12 @@ Meta広告では次の観点で効果を判断します。CVは conversionAction
 
 Google広告データの source が "ga4" の場合は、GA4にリンクされたGoogle広告の費用・クリック・表示回数と、Google広告から来たセッションのキーイベント（GA4で計測した成果）です。インプレッションシェアと広告側のコンバージョン値は無いので、それらには触れません。
 
-データから読み取れる事実だけを根拠にします。`;
+担当者のコメント（teamNotes）
+- teamNotes は、マーケティンググループの担当者がダッシュボードに書いた事情・補足です（about がコメントの付け先）。データからは分からない事実として受け止めます。
+- コメントで説明がつく問題（外部サービスに誘導していて計測できない、意図して止めている、対応済み など）は、悪化や課題として書かず、status の判定にも使いません。事情を踏まえた中立的な表現で一言触れる程度にし、コメントで不要・不可能とされた施策（例: 計測できないページへのタグ設置）は勧めません。
+- コメントが一部の事情しか説明しない場合は、残っている課題だけを書きます。
+
+データから読み取れる事実だけを根拠にします。`
 
 function pct(cur: number, prev: number) {
   return prev ? `${(((cur - prev) / prev) * 100).toFixed(1)}%` : "n/a";
@@ -146,7 +152,7 @@ function metaDigest(m: MetaReport) {
 const ratioOrNull = (x: number, y: number) => (y ? x / y : null);
 
 /** AIに渡す要約。生データをそのまま渡さず、比較しやすい形に絞る */
-export function buildDigest(site: SiteConfig, report: SiteReport) {
+export function buildDigest(site: SiteConfig, report: SiteReport, notes: SiteNote[] = []) {
   const g = report.ga4;
   const profile = siteProfile(site);
   const sendTo = profile.sendTo ?? [];
@@ -193,6 +199,7 @@ export function buildDigest(site: SiteConfig, report: SiteReport) {
     adsError: report.carriedOver?.ads ? undefined : report.adsError,
     meta: report.meta && metaDigest(report.meta),
     metaError: report.carriedOver?.meta ? undefined : report.metaError,
+    teamNotes: notes.length ? notesDigest(notes) : undefined,
   };
 }
 
@@ -202,6 +209,7 @@ export async function generateAdvice(
   site: SiteConfig,
   report: SiteReport,
   onText?: (chars: number) => void,
+  notes: SiteNote[] = [],
 ): Promise<Advice> {
   if (!env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY が未設定です");
   const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
@@ -218,7 +226,7 @@ export async function generateAdvice(
     messages: [
       {
         role: "user",
-        content: `次のデータを分析して、GA4・Google広告・Meta広告それぞれの状況判定・総評・改善アドバイスと、用語の説明を出してください。\n\n${JSON.stringify(buildDigest(site, report))}`,
+        content: `次のデータを分析して、GA4・Google広告・Meta広告それぞれの状況判定・総評・改善アドバイスと、用語の説明を出してください。\n\n${JSON.stringify(buildDigest(site, report, notes))}`,
       },
     ],
   });
@@ -248,5 +256,6 @@ export async function generateAdvice(
     ga4: report.ga4 ? out.ga4 : null,
     ads: report.ads ? out.ads : null,
     meta: report.meta ? out.meta : null,
+    notesAt: notesUpdatedAt(notes),
   };
 }

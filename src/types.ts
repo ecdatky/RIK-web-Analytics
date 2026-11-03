@@ -13,6 +13,7 @@ export interface Env {
   CACHE_TTL_SECONDS?: string;
   ADVICE_MODEL?: string;
   ASK_MODEL?: string; // 質問への回答に使うモデル。未設定なら ADVICE_MODEL と同じ
+  NOTE_MODEL?: string; // コメントを踏まえて診断の文面を書き直すモデル。未設定なら claude-haiku-5-5
 
   // secrets
   GOOGLE_SERVICE_ACCOUNT_JSON?: string;
@@ -301,4 +302,6 @@ export interface Advice {
   ads: AdviceSection | null;
   /** 旧バージョンで作られたアドバイスには無い */
   meta?: AdviceSection | null;
+  /** 作ったときに踏まえた担当者のコメントの最終更新時刻（コメントが無ければ無し） */
+  notesAt?: string;
 }
