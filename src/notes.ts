@@ -53,9 +53,20 @@ export async function listNotes(env: Env, siteId: string): Promise<SiteNote[]> {
   return (await env.CACHE.get<SiteNote[]>(notesKey(siteId), "json")) ?? [];
 }
 
-/** コメントがいつ最後に変わったか（AIのひとことが古いかどうかの判定に使う） */
+/**
+ * いまのコメントの組み合わせを表す短い印（AIのひとことがコメントを踏まえているかの判定に使う）。
+ * 追加・編集・削除のどれでも変わる。コメントが無ければ undefined
+ */
 export function notesUpdatedAt(notes: SiteNote[]): string | undefined {
-  return notes.reduce<string | undefined>((max, n) => (!max || n.updatedAt > max ? n.updatedAt : max), undefined);
+  if (!notes.length) return undefined;
+  const src = notes
+    .map((n) => `${n.id}@${n.updatedAt}`)
+    .sort()
+    .join("|");
+  // FNV-1a（32bit）。暗号用途ではなく、変わったかどうかが分かればよい
+  let h = 0x811c9dc5;
+  for (let i = 0; i < src.length; i++) h = Math.imul(h ^ src.charCodeAt(i), 0x01000193) >>> 0;
+  return `${notes.length}-${h.toString(36)}`;
 }
 
 async function saveNotes(env: Env, siteId: string, notes: SiteNote[]): Promise<void> {
@@ -72,7 +83,7 @@ export class NoteError extends Error {}
 
 export function isValidTarget(target: unknown): target is string {
   if (typeof target !== "string") return false;
-  if (target.startsWith("scope:")) return target.slice(6) in NOTE_SCOPES;
+  if (target.startsWith("scope:")) return Object.hasOwn(NOTE_SCOPES, target.slice(6));
   return /^item:.{1,200}$/.test(target);
 }
 
@@ -175,14 +186,14 @@ const REWRITE_SYSTEM = `あなたは株式会社ユニマットリックのマ�
 
 /** 同じ項目・同じコメントなら書き直しを使い回す（元の文面かコメントが変われば作り直す） */
 export async function rewriteKey(model: string, item: DiagnosisItem, notes: SiteNote[]): Promise<string> {
-  const src = JSON.stringify([model, item.id, item.title, item.action, item.severity, notes.map((n) => [n.target, n.text])]);
+  const src = JSON.stringify([model, item.id, item.title, item.evidence, item.action, item.severity, notes.map((n) => [n.target, n.text])]);
   const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(src));
   const hex = [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, "0")).join("");
   return `note-rw:v1:${item.id.slice(0, 80)}:${hex.slice(0, 32)}`;
 }
 
 async function rewriteWithAi(env: Env, site: SiteConfig, targets: { item: DiagnosisItem; notes: SiteNote[] }[]): Promise<RewriteOut[]> {
-  const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY!, timeout: 25_000, maxRetries: 1 });
+  const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY!, timeout: 15_000, maxRetries: 0 });
   const res = await client.beta.messages.parse({
     model: env.NOTE_MODEL || DEFAULT_MODEL,
     max_tokens: 4000,
@@ -223,17 +234,24 @@ export async function applyNotes(env: Env, site: SiteConfig, d: Diagnosis, notes
   const cached = await Promise.all(keys.map((k) => env.CACHE.get<RewriteOut>(k, "json")));
   const missing = targets.map((t, n) => ({ ...t, key: keys[n] })).filter((_, n) => !cached[n]);
   const fresh = new Map<string, RewriteOut>();
-  if (missing.length && env.ANTHROPIC_API_KEY) {
+  // 直前に書き直しが失敗していたら、しばらくはAIを呼ばずにコメントを添えるだけにする（画面の読み込みを待たせ続けないため）
+  const failKey = `note-rw-fail:v1:${site.id}`;
+  if (missing.length && env.ANTHROPIC_API_KEY && !(await env.CACHE.get(failKey))) {
     try {
       const out = await rewriteWithAi(env, site, missing);
+      const saves: Promise<void>[] = [];
       for (const m of missing) {
         const r = out.find((o) => o.id === m.item.id);
         if (!r) continue;
+        // 事情で説明がつくなら優先度は必ず低にする（要対応の件数から外すため）
+        if (r.explained) r.severity = "low";
         fresh.set(m.item.id, r);
-        await env.CACHE.put(m.key, JSON.stringify(r), { expirationTtl: 30 * 86_400 });
+        saves.push(env.CACHE.put(m.key, JSON.stringify(r), { expirationTtl: 30 * 86_400 }));
       }
+      await Promise.all(saves);
     } catch (e) {
       console.error("note rewrite", site.id, e);
+      await env.CACHE.put(failKey, "1", { expirationTtl: 600 }).catch(() => undefined);
     }
   }
 

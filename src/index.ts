@@ -236,7 +236,8 @@ async function handleApi(request: Request, env: Env, ctx: ExecutionContext, url:
       if (!site) return json({ error: "site が不正です" }, 400);
       const id = url.searchParams.get("id") ?? "";
       // 書き換えは画面からの JSON 送信だけ受け付ける（ほかのサイトのフォームから送らせないため）
-      if (request.method !== "GET" && !request.headers.get("content-type")?.includes("application/json")) {
+      const mediaType = (request.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+      if (request.method !== "GET" && mediaType !== "application/json") {
         return json({ error: "JSON で送ってください" }, 415);
       }
       try {
