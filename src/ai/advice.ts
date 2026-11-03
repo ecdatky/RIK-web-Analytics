@@ -187,11 +187,12 @@ export function buildDigest(site: SiteConfig, report: SiteReport) {
         services: g.aiReferrals.services.map(({ sources: _s, ...a }) => a),
       },
     },
-    ga4Error: report.ga4Error,
+    // 前回のデータで補った部分はエラーとして扱わない
+    ga4Error: report.carriedOver?.ga4 ? undefined : report.ga4Error,
     ads: report.ads && adsDigest(report.ads),
-    adsError: report.adsError,
+    adsError: report.carriedOver?.ads ? undefined : report.adsError,
     meta: report.meta && metaDigest(report.meta),
-    metaError: report.metaError,
+    metaError: report.carriedOver?.meta ? undefined : report.metaError,
   };
 }
 

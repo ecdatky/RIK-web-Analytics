@@ -174,7 +174,7 @@ async function handleApi(request: Request, env: Env, ctx: ExecutionContext, url:
         if (cached) {
           const stale = isStale(env, cached);
           // 古ければ裏で更新しておく。画面側は stale を見て最新版を取り直す
-          if (stale) ctx.waitUntil(refreshReport(env, site, range, compare).catch(() => undefined));
+          if (stale && url.searchParams.get("bg") !== "0") ctx.waitUntil(refreshReport(env, site, range, compare).catch(() => undefined));
           return json({ report: cached, stale });
         }
       }
@@ -244,9 +244,15 @@ export default {
     // Google広告APIは Explorer 権限だと1日2,880回まで。広告アカウントを直接読むサイトの先読みは1時間おきにする
     const halfHour = new Date(event.scheduledTime).getUTCMinutes() >= 30;
     for (const site of sites) {
-      for (const range of halfHour && site.adsCustomerIds?.length ? [] : WARM_RANGES) {
-        ctx.waitUntil(refreshReport(env, site, range, "prev").catch((e) => console.error(site.id, range, e)));
-      }
+      // 同じサイト（GA4プロパティ）の期間は順番に取る。並べると GA4 の同時リクエスト上限を超えやすい
+      const ranges = halfHour && site.adsCustomerIds?.length ? [] : WARM_RANGES;
+      ctx.waitUntil(
+        (async () => {
+          for (const range of ranges) {
+            await refreshReport(env, site, range, "prev").catch((e) => console.error(site.id, range, e));
+          }
+        })(),
+      );
       if (morning) {
         ctx.waitUntil(
           (async () => {

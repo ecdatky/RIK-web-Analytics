@@ -30,18 +30,71 @@ export const num = (r: Row, i: number) => Number(r.metricValues?.[i]?.value ?? 0
 export const dim = (r: Row, i: number) => r.dimensionValues?.[i]?.value ?? "";
 export const ymd = (v: string) => `${v.slice(0, 4)}-${v.slice(4, 6)}-${v.slice(6, 8)}`;
 
-export async function post<T>(env: Env, path: string, body: unknown): Promise<T> {
-  const token = await serviceAccountToken(env, SCOPE);
-  const res = await fetch(`${BASE}/${path}`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify(body),
+// GA4 Data API は1プロパティあたり同時10リクエストまで（超えると 429 "Exhausted concurrent requests quota"）。
+// 定期の先読み・画面からの取り直し・リアルタイムが重なっても超えないよう、1プロパティの同時実行数を抑える
+const MAX_CONCURRENT_PER_PROPERTY = 3;
+const RETRY_DELAYS_MS = [1000, 2500, 5000];
+
+const running = new Map<string, number>();
+const waiting = new Map<string, (() => void)[]>();
+
+async function acquire(key: string): Promise<void> {
+  if ((running.get(key) ?? 0) < MAX_CONCURRENT_PER_PROPERTY) {
+    running.set(key, (running.get(key) ?? 0) + 1);
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    const q = waiting.get(key) ?? [];
+    q.push(resolve);
+    waiting.set(key, q);
   });
-  if (!res.ok) {
-    const text = await res.text();
+}
+
+function release(key: string): void {
+  const next = waiting.get(key)?.shift();
+  if (next) return next(); // 枠をそのまま次に渡す
+  const n = (running.get(key) ?? 1) - 1;
+  if (n > 0) running.set(key, n);
+  else running.delete(key);
+}
+
+/** 混み合いによる一時的なエラー（同時実行数の超過・一時的な不調）か */
+export function isRetryable(status: number, text: string): boolean {
+  if (status === 503 || status === 500) return true;
+  // 1日・1時間のトークン上限は待っても回復しないので取り直さない
+  return status === 429 && /concurrent/i.test(text);
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+export async function post<T>(env: Env, path: string, body: unknown): Promise<T> {
+  const key = path.split(":")[0]; // properties/123
+  for (let attempt = 0; ; attempt++) {
+    await acquire(key);
+    let res: Response;
+    let text = "";
+    try {
+      const token = await serviceAccountToken(env, SCOPE);
+      res = await fetch(`${BASE}/${path}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) return (await res.json()) as T;
+      text = await res.text();
+    } finally {
+      release(key);
+    }
+    if (attempt < RETRY_DELAYS_MS.length && isRetryable(res.status, text)) {
+      // 少しずらして待ってから取り直す（他のリクエストの完了を待つ）
+      await sleep(RETRY_DELAYS_MS[attempt] * (0.75 + Math.random() * 0.5));
+      continue;
+    }
+    if (res.status === 429 && /concurrent/i.test(text)) {
+      throw new Error("GA4 が混み合っていて取得できませんでした（同時に取得できる上限を超えました）。少し待って「最新に更新」を押してください。");
+    }
     throw new Error(`GA4 API エラー (${res.status}): ${text.slice(0, 300)}`);
   }
-  return (await res.json()) as T;
 }
 
 function dailySeries(report: Report, range: DateRange) {
@@ -204,7 +257,7 @@ export async function fetchGa4(
   const aiFilter = {
     filter: { fieldName: "sessionSource", stringFilter: { matchType: "PARTIAL_REGEXP", value: AI_SOURCE_FILTER, caseSensitive: false } },
   };
-  const [batchA, batchB, batchC, batchD] = await Promise.all([
+  const [batchA, batchB, batchC] = await Promise.all([
     post<{ reports: Report[] }>(env, `${property}:batchRunReports`, {
       requests: [
         { dateRanges: [{ ...current, name: "current" }, { ...previous, name: "previous" }], metrics: TOTAL_METRICS.map(m) },
@@ -256,7 +309,9 @@ export async function fetchGa4(
         { dateRanges: [{ startDate: today, endDate: today }], metrics: [m("activeUsers"), m("sessions"), m("keyEvents")] },
       ],
     }),
-    // サイトの目的に合わせた指標（他サイトへの送客、RIKCADお知らせ経由の閲覧）。取れなくても他の数字は出す
+    // サイトの目的に合わせた指標（他サイトへの送客、RIKCADお知らせ経由の閲覧）と、
+    // AIサービス（ChatGPT・Gemini など）から来た訪問。取れなくても他の数字は出す。
+    // 同時リクエスト数を抑えるため1回のバッチ（上限5件）にまとめる
     post<{ reports: Report[] }>(env, `${property}:batchRunReports`, {
       requests: [
         {
@@ -267,6 +322,15 @@ export async function fetchGa4(
           orderBys: [{ metric: { metricName: "eventCount" }, desc: true }],
           limit: 50,
         },
+        {
+          dateRanges: both,
+          dimensions: [d("sessionSource")],
+          metrics: [m("sessions"), m("engagedSessions"), m("keyEvents"), m("activeUsers")],
+          dimensionFilter: aiFilter,
+          orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
+          limit: 100,
+        },
+        { dateRanges: both, metrics: [m("activeUsers")], dimensionFilter: aiFilter },
         ...(opts.rikcadNews
           ? [
               {
@@ -279,24 +343,7 @@ export async function fetchGa4(
           : []),
       ],
     }).catch((e) => {
-      console.error("ga4 purpose metrics", propertyId, e instanceof Error ? e.message : e);
-      return undefined;
-    }),
-    // AIサービス（ChatGPT・Gemini など）から来た訪問。取れなくても他の数字は出す
-    post<{ reports: Report[] }>(env, `${property}:batchRunReports`, {
-      requests: [
-        {
-          dateRanges: both,
-          dimensions: [d("sessionSource")],
-          metrics: [m("sessions"), m("engagedSessions"), m("keyEvents"), m("activeUsers")],
-          dimensionFilter: aiFilter,
-          orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
-          limit: 100,
-        },
-        { dateRanges: both, metrics: [m("activeUsers")], dimensionFilter: aiFilter },
-      ],
-    }).catch((e) => {
-      console.error("ga4 ai referrals", propertyId, e instanceof Error ? e.message : e);
+      console.error("ga4 purpose / ai metrics", propertyId, e instanceof Error ? e.message : e);
       return undefined;
     }),
   ]);
@@ -317,8 +364,7 @@ export async function fetchGa4(
   ) as Ga4Report["totals"];
 
   const todayRow = todayR.rows?.[0];
-  const [linkR, newsR] = batchC?.reports ?? [];
-  const [aiR, aiTotalR] = batchD?.reports ?? [];
+  const [linkR, aiR, aiTotalR, newsR] = batchC?.reports ?? [];
 
   return {
     totals,

@@ -606,14 +606,14 @@ function convHighlights(dates, conv, cost) {
 const md = (date) => `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}`;
 
 // ---------- data ----------
-async function loadReport(siteId, { force = false } = {}) {
-  const q = `/api/report?site=${encodeURIComponent(siteId)}&range=${state.range}&compare=${state.compare}${force ? "&refresh=1" : ""}`;
+async function loadReport(siteId, { force = false, noBackground = false } = {}) {
+  const q = `/api/report?site=${encodeURIComponent(siteId)}&range=${state.range}&compare=${state.compare}${force ? "&refresh=1" : ""}${noBackground ? "&bg=0" : ""}`;
   return api(q);
 }
 
-/** キャッシュを即表示 → 古ければ最新を取り直して onUpdate */
+/** キャッシュを即表示 → 古ければ最新を取り直して onUpdate（取り直しはこちらでするので、サーバーの裏での更新は頼まない） */
 async function loadReportFresh(siteId, onUpdate) {
-  const first = await loadReport(siteId);
+  const first = await loadReport(siteId, { noBackground: true });
   onUpdate(first.report, first.stale);
   if (first.stale) {
     const fresh = await loadReport(siteId, { force: true });
@@ -1625,11 +1625,19 @@ async function renderSite(siteId) {
   const draw = (report, stale) => {
     if (state.tab !== siteId) return;
     destroyCharts();
+    // 前回のデータで補った部分は赤いエラーにせず、いつの時点のデータかだけ出す
+    const carried = report.carriedOver || {};
     const errors = [
-      report.ga4Error && `GA4: ${report.ga4Error}`,
-      report.adsError && `Google広告: ${report.adsError}`,
-      report.metaError && `Meta広告: ${report.metaError}`,
+      report.ga4Error && !carried.ga4 && `GA4: ${report.ga4Error}`,
+      report.adsError && !carried.ads && `Google広告: ${report.adsError}`,
+      report.metaError && !carried.meta && `Meta広告: ${report.metaError}`,
     ].filter(Boolean);
+    const carriedNote = [
+      carried.ga4 && "GA4",
+      carried.ads && "Google広告",
+      carried.meta && "Meta広告",
+    ].filter(Boolean);
+    const carriedAt = [carried.ga4, carried.ads, carried.meta].filter(Boolean).sort()[0];
     const noAds = [!site.hasAds && "Google広告", !site.hasMeta && "Meta広告"].filter(Boolean);
     view.innerHTML = `
       <div class="site-head">
@@ -1642,6 +1650,7 @@ async function renderSite(siteId) {
       </div>
       ${jumpNav(report)}
       ${errors.map((e) => `<div class="alert">${esc(e)}</div>`).join("")}
+      ${carriedNote.length ? `<p class="small muted">${esc(carriedNote.join("・"))}は一時的に取得できなかったため、${esc(fmtTime(carriedAt))} 時点のデータを表示しています（次の更新で自動的に取り直します）。</p>` : ""}
       <div id="sec-status">${healthHero(report)}</div>
       ${site.hasGa4 ? `<div class="tiles today" id="today">${todayTiles(report.ga4)}</div>` : ""}
       <div class="card advice" id="advice"><p class="muted">AIの総評を読み込み中…</p></div>
