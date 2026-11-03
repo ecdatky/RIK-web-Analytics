@@ -104,19 +104,61 @@ export async function getCachedReport(env: Env, siteId: string, range: RangeKey,
   return env.CACHE.get<SiteReport>(reportKey(siteId, range, compare), "json");
 }
 
+// 同じ期間の取り直しが重なると GA4 の同時リクエスト上限（1プロパティ10件）を超えやすいので、
+// 実行中のものがあればそれを待って同じ結果を返す（同じ Worker 内。KV の書き込み回数を増やさないため KV のロックは使わない）
+const inFlight = new Map<string, Promise<SiteReport>>();
+
+/** データを取り直してキャッシュする */
 export async function refreshReport(env: Env, site: SiteConfig, range: RangeKey, compare: CompareKey): Promise<SiteReport> {
+  const key = reportKey(site.id, range, compare);
+  const running = inFlight.get(key);
+  if (running) return running;
+  const work = buildAndSave(env, site, range, compare);
+  inFlight.set(key, work);
+  try {
+    return await work;
+  } finally {
+    inFlight.delete(key);
+  }
+}
+
+async function buildAndSave(env: Env, site: SiteConfig, range: RangeKey, compare: CompareKey): Promise<SiteReport> {
   const report = await buildReport(env, site, range, compare);
   // 全部エラーの時は、前回の正常データを上書きしない
   const failed =
     (site.ga4PropertyId ? !report.ga4 : true) &&
     (hasGoogleAds(site) ? !report.ads : true) &&
     (site.metaAdAccountIds?.length ? !report.meta : true);
-  if (!failed) {
-    await env.CACHE.put(reportKey(site.id, range, compare), JSON.stringify(report), { expirationTtl: KV_KEEP_SECONDS });
-    // 診断はその期間のデータを取り直すたびに作り直す（定期の先読みで自動更新される）
-    await saveDiagnosis(env, diagnose(report, site));
+  if (failed) return report;
+  // 一部だけ一時的に取れなかったときは、前回取れたデータを残して表示する（いつの時点かは画面に出す）
+  if (report.ga4Error || report.adsError || report.metaError) {
+    const prev = await getCachedReport(env, site.id, range, compare);
+    if (prev) carryOver(report, prev);
   }
+  await env.CACHE.put(reportKey(site.id, range, compare), JSON.stringify(report), { expirationTtl: KV_KEEP_SECONDS });
+  // 診断はその期間のデータを取り直すたびに作り直す（定期の先読みで自動更新される）
+  await saveDiagnosis(env, diagnose(report, site));
   return report;
+}
+
+/** 取れなかった部分を前回のデータで補う。前回も前回のデータだったなら、元の取得時刻を引き継ぐ */
+export function carryOver(report: SiteReport, prev: SiteReport): void {
+  const at = (part: "ga4" | "ads" | "meta") => prev.carriedOver?.[part] ?? prev.fetchedAt;
+  const keep = (part: "ga4" | "ads" | "meta") => {
+    report.carriedOver = { ...report.carriedOver, [part]: at(part) };
+  };
+  if (report.ga4Error && prev.ga4) {
+    report.ga4 = prev.ga4;
+    keep("ga4");
+  }
+  if (report.adsError && prev.ads) {
+    report.ads = prev.ads;
+    keep("ads");
+  }
+  if (report.metaError && prev.meta) {
+    report.meta = prev.meta;
+    keep("meta");
+  }
 }
 
 export function isStale(env: Env, report: SiteReport): boolean {

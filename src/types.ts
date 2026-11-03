@@ -266,6 +266,8 @@ export interface SiteReport {
   adsError?: string;
   meta?: MetaReport;
   metaError?: string;
+  /** 一時的に取れず前回のデータを表示している部分と、そのデータの取得時刻 */
+  carriedOver?: { ga4?: string; ads?: string; meta?: string };
 }
 
 /** good: 好調 / steady: 順調 / flat: 横ばい / caution: 注意 / bad: 要対策 */
