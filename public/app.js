@@ -163,6 +163,14 @@ const STATUS_BASIS = {
 const siteOf = (report) => state.sites?.find((s) => s.id === report.siteId);
 const roleOf = (report) => siteOf(report)?.role ?? "product";
 
+/** 対象期間か比較期間に重なる、計測が止まっていた期間（サイト移設など） */
+function gapsOf(report) {
+  const hit = (g, r) => r && g.start <= r.endDate && g.end >= r.startDate;
+  return (siteOf(report)?.gaps ?? []).filter((g) => hit(g, report.current) || hit(g, report.previous));
+}
+const gapText = (g) => `${md(g.start)}〜${md(g.end)}（${g.reason}）`;
+const inGap = (gaps, date) => !!date && gaps.some((g) => date >= g.start && date <= g.end);
+
 /**
  * 各指標の比較期間比を重み付けして合算し、5段階で判定する。
  * サイトの目的に沿った指標を重く見る（製品サイトは問い合わせ・資料請求、コーポは送客・回遊、RIKシェアはRIKCADお知らせ経由の閲覧）。
@@ -187,7 +195,9 @@ function health(report) {
       text: `${name} ${fmt(cur)}（${COMPARE_NAME[report.compare]}より${Math.abs(d * 100).toFixed(0)}%${d >= 0 ? "増" : "減"}、${sign}${fmt(Math.abs(diff))}）${small ? "※件数が少ないため参考" : ""}`,
     });
   };
-  const g = report.ga4?.totals;
+  // 計測が止まっていた日を含む比較では、アクセス解析の増減は実態ではないので判定に使わない
+  const gaps = gapsOf(report);
+  const g = gaps.length ? null : report.ga4?.totals;
   const role = roleOf(report);
   if (g && role === "corporate") {
     const sendTo = siteOf(report)?.sendTo ?? [];
@@ -231,13 +241,14 @@ function health(report) {
     }
   }
   const total = sig.reduce((s, x) => s + x.w, 0);
-  if (!total) return null;
+  if (!total) return gaps.length && report.ga4 ? { level: "flat", score: 0, gaps, gapOnly: true, goods: [], bads: [], flats: [] } : null;
   const score = sig.reduce((s, x) => s + x.dir * x.w, 0) / total;
   const level = score >= 0.5 ? "good" : score >= 0.15 ? "steady" : score > -0.15 ? "flat" : score > -0.5 ? "caution" : "bad";
   const byWeight = (x, y) => y.w - x.w;
   return {
     level,
     score,
+    gaps,
     goods: sig.filter((x) => x.dir > 0).sort(byWeight),
     bads: sig.filter((x) => x.dir < 0).sort(byWeight),
     flats: sig.filter((x) => x.dir === 0).sort(byWeight),
@@ -261,6 +272,22 @@ function healthHero(report) {
   if (!h) return "";
   const l = LEVELS[h.level];
   const list = (items, cls) => items.slice(0, 3).map((x) => `<li class="${cls}">${esc(x.text)}</li>`).join("");
+  const gapNote = h.gaps.length
+    ? `<p class="hero-gap">${esc(h.gaps.map(gapText).join("、"))}は計測が止まっていたため、この期間のアクセス解析の増減は判定に使っていません。</p>`
+    : "";
+  if (h.gapOnly) {
+    return `<section class="hero lv-flat">
+    <div class="hero-main">
+      <div class="hero-icon" aria-hidden="true">${face("flat", "face-live")}</div>
+      <div>
+        <div class="hero-label">いまの状況：<strong>判定なし</strong></div>
+        <div class="hero-text" id="hero-headline">計測が止まっていた日を含むため、増減では判定していません</div>
+        <div class="muted small">${RANGE_LABEL[report.range]}間と${COMPARE_NAME[report.compare]}のどちらかに、サイトのデータがほぼ記録されていない日があります。日別の推移と記事ごとの閲覧で様子を見てください。</div>
+      </div>
+    </div>
+    ${gapNote}
+  </section>`;
+  }
   return `<section class="hero lv-${h.level}">
     <div class="hero-main">
       <div class="hero-icon" aria-hidden="true">${face(h.level, "face-live")}</div>
@@ -271,6 +298,7 @@ function healthHero(report) {
       </div>
     </div>
     ${meter(h.level)}
+    ${gapNote}
     <div class="hero-points">
       <div><h3>良くなった点</h3><ul>${list(h.goods, "up") || '<li class="none">特になし</li>'}</ul></div>
       <div><h3>気になる点</h3><ul>${list(h.bads, "down") || '<li class="none">特になし</li>'}</ul></div>
@@ -752,11 +780,13 @@ async function renderSummary() {
       const todo = diagnosis?.items.filter((i) => i.severity !== "low").length ?? 0;
       if (!h) return "";
       const l = LEVELS[h.level];
-      const point = (adviceMatchesView(advice) && advice.headline) || (h.bads[0] ? `気になる点：${h.bads[0].text}` : h.goods[0] ? `良くなった点：${h.goods[0].text}` : l.text);
+      const point = h.gapOnly
+        ? `${h.gaps.map(gapText).join("、")}は計測が止まっていたため、増減では判定していません`
+        : (adviceMatchesView(advice) && advice.headline) || (h.bads[0] ? `気になる点：${h.bads[0].text}` : h.goods[0] ? `良くなった点：${h.goods[0].text}` : l.text);
       return `<button class="status-card lv-${h.level}" data-goto="${esc(s.id)}">
         ${s.url ? thumb(s, "sm") : ""}
         <span class="sc-icon" aria-hidden="true">${face(h.level, "face-live")}</span>
-        <span class="sc-body"><span class="sc-name">${esc(s.name)}</span><span class="sc-label">${l.label}</span><span class="sc-text">${esc(point)}</span>${
+        <span class="sc-body"><span class="sc-name">${esc(s.name)}</span><span class="sc-label">${h.gapOnly ? "判定なし" : l.label}</span><span class="sc-text">${esc(point)}</span>${
           diagnosis ? `<span class="sc-todo${todo ? "" : " none"}">${todo ? `要対応 ${todo}件` : "要対応なし"}・${fmtTime(diagnosis.checkedAt)} 診断</span>` : ""
         }</span>
       </button>`;
@@ -775,7 +805,7 @@ async function renderSummary() {
       const mCpaPrev = m ? ratio(m.spend.previous, m.conversions.previous) : 0;
       return `<tr>
         <td><button class="btn" data-goto="${esc(s.id)}">${esc(s.name)}</button></td>
-        <td>${h ? levelBadge(h.level) : "-"}</td>
+        <td>${h ? (h.gapOnly ? `<span class="muted small" title="${esc(h.gaps.map(gapText).join("、"))}">判定なし</span>` : levelBadge(h.level)) : "-"}</td>
         <td class="r ga4-col">${g ? fmtInt(g.activeUsers.current) : "-"}<br>${g ? delta(g.activeUsers.current, g.activeUsers.previous) : ""}</td>
         <td class="r ga4-col">${g ? fmtInt(g.sessions.current) : "-"}</td>
         <td class="r ga4-col">${g ? fmtInt(g.keyEvents.current) : "-"}<br>${g ? delta(g.keyEvents.current, g.keyEvents.previous) : ""}</td>
@@ -1554,8 +1584,37 @@ function drawTrend(g) {
       },
     ],
     fmtInt,
-    trendHighlights(dates, values, prev, label, fmtInt),
+    withGapHighlights(g, trendHighlights(dates, values, prev, label, fmtInt)),
   );
+}
+
+/** 計測が止まっていた期間を注記し、その前後の増減の注記は外す（移設による見かけの増減なので） */
+function withGapHighlights(g, points) {
+  const site = state.sites?.find((s) => s.id === state.tab);
+  const gaps = site?.gaps ?? [];
+  if (!gaps.length) return points;
+  const dates = g.daily.map((d) => d.date);
+  const prevDates = g.dailyPrevious.map((d) => d.date);
+  const near = (date) => inGap(gaps, date) || gaps.some((x) => date === nextDay(x.end) || date === nextDay(nextDay(x.end)));
+  const kept = points.filter((p) => !near(dates[p.index]) && !near(prevDates[p.index]));
+  const marks = [];
+  for (const x of gaps) {
+    const i = dates.findIndex((d) => d >= x.start && d <= x.end);
+    if (i < 0) continue;
+    marks.push({
+      index: i,
+      tone: "info",
+      title: `${md(x.start)}〜${md(x.end)} 計測が止まっていた期間`,
+      reason: `${x.reason}のため、この間はデータがほぼ記録されていません。前後の増減は実際の変化ではありません。`,
+    });
+  }
+  return [...marks, ...kept].slice(0, 3).sort((a, b) => a.index - b.index);
+}
+
+function nextDay(date) {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
 }
 
 async function renderSite(siteId) {

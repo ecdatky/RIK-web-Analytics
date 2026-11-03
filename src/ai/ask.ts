@@ -45,6 +45,7 @@ const SCREEN_GUIDE = `## ダッシュボードの画面構成
 ## 計測について知っておくこと
 - 製品サイトの成果（キーイベント）は、無料相談フォーム送信と、Kairos3フォーム（info.rikcorp.jp/form/ の資料請求・導入問い合わせ・点群・AI補助金）の完了。
 - コーポレートサイトのMeta広告はPeatix（イベント申込）に誘導しているため、申込はこの画面では数えられない。申込数はPeatixの主催者管理画面で確認する。
+- RIKシェアは2026-11-02に www.rik-support.net/share/ から https://share.rikcorp.jp/ に移設した（旧URLは新URLへ転送、GA4は同じプロパティで計測を継続、RSSは https://share.rikcorp.jp/feed/）。移設作業で10/23〜11/1はデータがほぼ記録されていない。この日を含む期間では、いまの状況は「判定なし」、診断は増減の項目を出さず、グラフにはこの期間の注記が付く（report.measurementGaps）。ページのパスは /share/ を外した形にまとめている。
 - RIKシェアの「RIKCADお知らせ」は、RIKCAD起動時のお知らせ画面から記事を開いた訪問（参照元/メディア rss / rss）。タブを開いたまま30分以上たって再開した分も数えるので、実際のクリック数より多めに出る。
 - 「AIからのアクセス」はGA4の参照元（chatgpt.com、perplexity.ai、gemini.google.com など、AIが付ける utm_source も含む）で判定している（データは report.ga4.aiReferrals）。AIがサイトを読みに来るクローラー（bot）はGA4に記録されないので含まない。GoogleのAIによる概要・AIモードからの訪問は google / organic と区別できず、アプリから開いて参照元が残らない訪問は direct に入るため、実際のAI経由はこれより多い。AIのクローラーの量を見たい場合は、サイトのサーバーやCloudflareのアクセスログで調べる必要があり、この画面では見られない。
 - GA4の管理画面と数字が少し違うのは、集計日（昨日までの完了日）の違いがほとんど。

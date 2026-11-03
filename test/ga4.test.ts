@@ -31,6 +31,7 @@ describe("groupChannels", () => {
 describe("hasRikcadNews", () => {
   it("RIKシェアのURLなら有効、指定があればそれに従う", () => {
     expect(hasRikcadNews({ id: "rikshare", name: "RIKシェア", url: "https://www.rik-support.net/share/" })).toBe(true);
+    expect(hasRikcadNews({ id: "rikshare", name: "RIKシェア", url: "https://share.rikcorp.jp/" })).toBe(true);
     expect(hasRikcadNews({ id: "corp", name: "コーポ", url: "https://www.rikcorp.jp/" })).toBe(false);
     expect(hasRikcadNews({ id: "x", name: "x", rikcadNews: true })).toBe(true);
   });

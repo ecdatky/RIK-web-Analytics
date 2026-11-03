@@ -1,5 +1,5 @@
 import type { CompareKey, Env, RangeKey, SiteConfig } from "./types";
-import { siteProfile } from "./sites";
+import { measurementGaps, siteProfile } from "./sites";
 import { isCompareKey, isRangeKey } from "./dates";
 import { verifyAccess } from "./access";
 import { fetchRealtime } from "./google/ga4";
@@ -161,6 +161,8 @@ async function handleApi(request: Request, env: Env, ctx: ExecutionContext, url:
           // いまの状況の判定を、サイトの目的に合わせた指標で行うため
           role: siteProfile(s).role,
           sendTo: siteProfile(s).sendTo ?? [],
+          // 計測が止まっていた期間。いまの状況の判定とグラフの注記に使う
+          gaps: measurementGaps(s),
         })),
       });
 

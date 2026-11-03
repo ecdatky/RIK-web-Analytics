@@ -7,6 +7,7 @@ import { fetchMeta } from "./meta/meta";
 import { fetchMetaViaGa4 } from "./meta/metaViaGa4";
 import { generateAdvice } from "./ai/advice";
 import { diagnose, type Diagnosis } from "./diagnosis";
+import { RIKSHARE_URL, mergeMovedPages, siteRole, withCurrentUrl } from "./sites";
 import { DEMO_SITES, demoAdvice, demoAds, demoGa4, demoMeta } from "./demo";
 
 export function isDemo(env: Env): boolean {
@@ -22,12 +23,12 @@ export function loadSites(env: Env): SiteConfig[] {
   if (!Array.isArray(parsed) || parsed.some((s) => !s.id || !s.name)) {
     throw new Error("SITES_JSON の形式が正しくありません（id と name が必須）");
   }
-  return parsed;
+  return parsed.map(withCurrentUrl);
 }
 
 /** RIKCADのお知らせ画面はRIKシェアのRSSを読むので、RIKシェアのサイトだけ rss 流入を「RIKCADお知らせ」と表示する */
 export function hasRikcadNews(site: SiteConfig): boolean {
-  return site.rikcadNews ?? /rik-support\.net\/share/.test(site.url ?? "");
+  return site.rikcadNews ?? RIKSHARE_URL.test(site.url ?? "");
 }
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -48,7 +49,8 @@ export async function buildReport(env: Env, site: SiteConfig, range: RangeKey, c
   await Promise.all([
     site.ga4PropertyId &&
       fetchGa4(env, site.ga4PropertyId, current, previous, { rikcadNews: hasRikcadNews(site) }).then(
-        (g) => (report.ga4 = g),
+        // RIKシェアは移設前の /share/xxx/ と移設後の /xxx/ を同じ記事としてまとめる
+        (g) => (report.ga4 = siteRole(site) === "media" ? mergeMovedPages(g) : g),
         (e) => (report.ga4Error = errMsg(e)),
       ),
     hasGoogleAds(site) &&
@@ -82,15 +84,15 @@ export async function buildReport(env: Env, site: SiteConfig, range: RangeKey, c
 
 // ---- キャッシュ ----
 
-const reportKey = (siteId: string, range: RangeKey, compare: CompareKey) => `report:v2:${siteId}:${range}:${compare}`;
+const reportKey = (siteId: string, range: RangeKey, compare: CompareKey) => `report:v3:${siteId}:${range}:${compare}`;
 // AIのひとことは期間（range×compare）ごとに保存し、全ユーザーで共有する。
 // 生成した日（JST）が変わったら無効にし、朝の定期実行でまとめて消す
-const advicePrefix = (siteId: string) => `advice:v3:${siteId}:`;
+const advicePrefix = (siteId: string) => `advice:v4:${siteId}:`;
 const adviceKey = (siteId: string, range: RangeKey, compare: CompareKey) => `${advicePrefix(siteId)}${range}:${compare}`;
 const legacyAdviceKey = (siteId: string) => `advice:v2:${siteId}`;
 const adviceJobKey = (siteId: string, range: RangeKey, compare: CompareKey) => `advice-job:v1:${siteId}:${range}:${compare}`;
 // 診断も期間（range×compare）ごとに保存する。画面で見ている期間と違う診断は出さない
-const diagKey = (siteId: string, range: RangeKey, compare: CompareKey) => `diag:v3:${siteId}:${range}:${compare}`;
+const diagKey = (siteId: string, range: RangeKey, compare: CompareKey) => `diag:v4:${siteId}:${range}:${compare}`;
 // KV には長めに残し、鮮度判定は fetchedAt で行う（古いデータでも即表示 → 裏で更新）
 const KV_KEEP_SECONDS = 3 * 86_400;
 
