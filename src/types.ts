@@ -41,12 +41,21 @@ export interface SiteConfig {
   metaAdAccountIds?: string[];
   /** Meta広告でCVとして数える action_type。既定は ["lead"] */
   metaConversionActions?: string[];
-  /** RIKCADのお知らせ(RSS)の流入を「RIKCADお知らせ」と表示する。未指定なら URL が rik-support.net/share のサイトで有効 */
+  /** RIKCADのお知らせ(RSS)の流入を「RIKCADお知らせ」と表示する。未指定なら URL がRIKシェア（share.rikcorp.jp、旧 rik-support.net/share）のサイトで有効 */
   rikcadNews?: boolean;
   /** サイトの種類。未指定なら id・URL から決める（src/sites.ts） */
   role?: SiteRole;
+  /** 計測が止まっていた期間（サイト移設など）。未指定ならRIKシェアは src/sites.ts の既定値 */
+  measurementGaps?: MeasurementGap[];
   /** AIアドバイスに渡す、サイトの目的・KPIの補足（任意） */
   goal?: string;
+}
+
+/** 計測が止まっていた期間。start・end は YYYY-MM-DD（両端を含む） */
+export interface MeasurementGap {
+  start: string;
+  end: string;
+  reason: string;
 }
 
 export type RangeKey = "7d" | "28d" | "90d";

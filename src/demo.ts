@@ -106,7 +106,7 @@ export function demoGa4(site: SiteConfig, current: DateRange, previous: DateRang
       site.id === "corp"
         ? [
             { domain: "products.rikcorp.jp", clicks: k(Math.round(sessions * 0.09), Math.round(prevSessions * 0.1)) },
-            { domain: "rik-support.net", clicks: k(Math.round(sessions * 0.03), Math.round(prevSessions * 0.03)) },
+            { domain: "share.rikcorp.jp", clicks: k(Math.round(sessions * 0.03), Math.round(prevSessions * 0.03)) },
             { domain: "peatix.com", clicks: k(Math.round(sessions * 0.01), Math.round(prevSessions * 0.01)) },
           ]
         : [],

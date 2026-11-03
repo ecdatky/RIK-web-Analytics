@@ -1,5 +1,5 @@
 import type { AdsReport, CompareKey, Ga4Report, MetaDestination, MetaReport, RangeKey, SiteConfig, SiteReport, SiteRole } from "./types";
-import { siteProfile, type SiteProfile } from "./sites";
+import { gapLabel, gapsInRanges, measurementGaps, siteProfile, type SiteProfile } from "./sites";
 
 // レポートの数字から、GA4・Google広告・Meta広告の問題点と「次にできる行動」を決まったルールで洗い出す。
 // AIの総評と違って毎回同じ基準で判定するので、改善したかどうかを日々の診断で追える。
@@ -387,8 +387,8 @@ function diagnoseMedia(g: Ga4Report, items: DiagnosisItem[], passed: string[], p
         title: "RIKCADお知らせ経由の訪問が記録されていません",
         evidence: `訪問 ${int(sessions)}回のうち、RIKCADお知らせ（rss / rss）経由は0回。${prev ? `${prevName}は${int(prev)}回ありました。` : ""}`,
         action:
-          "RSS（https://www.rik-support.net/share/feed/）に最新の投稿が出ているか、記事リンクに utm_medium=rss が付いているかを確認する。RIKCADを起動してお知らせ画面に記事が表示されるかも見る。",
-        where: "ブラウザで https://www.rik-support.net/share/feed/ を開く / RIKCADのお知らせ画面",
+          "RSS（https://share.rikcorp.jp/feed/）に最新の投稿が出ているか、記事リンクに utm_medium=rss が付いているかを確認する。RIKCADを起動してお知らせ画面に記事が表示されるかも見る。",
+        where: "ブラウザで https://share.rikcorp.jp/feed/ を開く / RIKCADのお知らせ画面",
       });
     } else if (prev && change(cur, prev) <= -0.2) {
       items.push({
@@ -535,12 +535,39 @@ function diagnoseMeta(m: MetaReport, items: DiagnosisItem[], passed: string[]) {
   }
 }
 
-export function diagnose(report: SiteReport, site?: Pick<SiteConfig, "id" | "url" | "role">, now = new Date()): Diagnosis {
+// 期間どうしの増減で判定する項目。計測が止まっていた日を含む比較では出さない
+const COMPARES_PERIODS = (id: string) => id.endsWith("-down") || id === "measure-rikcad-news" || id === "corp-send-none";
+
+export function diagnose(
+  report: SiteReport,
+  site?: Pick<SiteConfig, "id" | "url" | "role" | "measurementGaps">,
+  now = new Date(),
+): Diagnosis {
   const items: DiagnosisItem[] = [];
   const passed: string[] = [];
   const profile = siteProfile(site ?? { id: report.siteId });
   const prevName = report.compare === "yoy" ? "前年の同じ日付" : "直前の同じ日数";
-  if (report.ga4) diagnoseGa4(report.ga4, profile, items, passed, prevName);
+  if (report.ga4) {
+    const gaps = gapsInRanges(measurementGaps(site ?? { id: report.siteId }), report.current, report.previous);
+    if (gaps.length) {
+      // サイト移設などで計測が止まっていた日を含むと、増減は実態ではなく計測の有無の差になる
+      const ga4Items: DiagnosisItem[] = [];
+      diagnoseGa4(report.ga4, profile, ga4Items, [], prevName);
+      items.push(...ga4Items.filter((i) => !COMPARES_PERIODS(i.id)));
+      const when = gaps.map((g) => `${gapLabel(g)}（${g.reason}）`).join("、");
+      items.push({
+        id: "measure-gap",
+        area: "measure",
+        severity: "low",
+        title: "計測が止まっていた日を含むため、アクセス解析の増減は判定していません",
+        evidence: `${when}はサイトのデータがほぼ記録されていません。この日を含む期間どうしを比べると、実際の変化ではなく計測の有無の差が出ます。`,
+        action: "移設後の日だけで比べられるようになるまで、増減ではなく日別の推移と記事ごとの閲覧で様子を見る。集計日数を7日にすると早く通常の比較に戻ります。",
+        where: "画面上部の集計日数 / サイトのアクセス解析の日別推移",
+      });
+    } else {
+      diagnoseGa4(report.ga4, profile, items, passed, prevName);
+    }
+  }
   if (report.ads) diagnoseAds(report.ads, report.ga4, items, passed, prevName);
   if (report.meta) diagnoseMeta(report.meta, items, passed);
   items.sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);

@@ -3,7 +3,7 @@ import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import * as z from "zod/v4";
 import type { Advice, AdsReport, Env, MetaReport, SiteConfig, SiteReport } from "../types";
 import { COMPARE_LABEL } from "../dates";
-import { siteProfile } from "../sites";
+import { gapsInRanges, measurementGaps, siteProfile } from "../sites";
 
 const DEFAULT_MODEL = "claude-opus-5-5";
 
@@ -67,6 +67,8 @@ site.profile に、そのサイトの対象（audience）・目的（purpose）�
 - オウンドメディア RIKシェア（role: media）: RIKCADユーザーに正しい情報・最新の情報を届けるサイトで、投稿はRIKCAD起動時のお知らせ画面に自動で表示されます。問い合わせ・資料請求などのキーイベントは目的ではないので、件数やCVRには触れず、キーイベントの設定も勧めません。RIKCADお知らせ経由の閲覧（ga4.rikcadNews）、記事を読む人の数、記事がしっかり読まれた割合（エンゲージメント率）、どの記事・テーマが読まれたかで評価し、提案は記事のテーマ・タイトル・投稿頻度・読みやすさについて書きます。
 - site.goal がある場合は、その補足も目的として扱います。
 
+- measurementGaps に期間があるときは、その日はサイト移設などで計測が止まっていて、データがほぼ0です。この日を含む期間どうしの増減は実態ではないので、増減で status を決めず flat にし、減少を問題として書きません。そのことを総評で一言だけ触れ、日別の推移や記事ごとの閲覧から読み取れることを書きます。
+- RIKシェアは2026-11-02に www.rik-support.net/share/ から share.rikcorp.jp に移設しました。ページのパスは /share/ が付かない形にまとめてあります。
 - チャネル「RIKCADお知らせ」（参照元/メディア rss / rss）は、RIKCAD起動時に出るお知らせ画面からRIKシェアの記事を開いた訪問です。既存のRIKCADユーザーの再訪なので、新規獲得の流入とは分けて評価します。記事タブを開いたまま30分以上たって再開した分も同じ流入として数えられるため、セッション数は実際のクリック数より多めに出ます。
 
 - ga4.aiReferrals は、ChatGPT・Gemini・Perplexity・Copilot・Claude などAIの回答に載ったリンクから来た訪問（GA4の参照元で判定）です。AIに会社・製品が紹介されているかの目安として扱います。件数が少ないうちは増減を大きく評価せず、どのAIから来ているか、全訪問に占める割合、来た人が読み進めたかを短く触れる程度にします。AIがサイトを読みに来るクローラー（bot）や、Googleの「AIによる概要」・AIモードから来た訪問（google / organic と区別できない）は含まれません。
@@ -157,6 +159,8 @@ export function buildDigest(site: SiteConfig, report: SiteReport) {
       profile: { role: profile.role, audience: profile.audience, purpose: profile.purpose, kpis: profile.kpis },
     },
     period: { current: report.current, comparison: report.previous, comparisonType: COMPARE_LABEL[report.compare] },
+    // サイト移設などで計測が止まっていた期間のうち、対象期間か比較期間に重なるもの
+    measurementGaps: gapsInRanges(measurementGaps(site), report.current, report.previous),
     ga4: g && {
       totals: withChange(g.totals),
       channels: g.channels,

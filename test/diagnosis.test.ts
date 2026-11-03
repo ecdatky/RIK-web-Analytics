@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { diagnose } from "../src/diagnosis";
-import { siteRole } from "../src/sites";
+import { mergeMovedPages, siteRole, withCurrentUrl } from "../src/sites";
 import { resolveRanges } from "../src/dates";
 import { DEMO_SITES, demoAds, demoGa4, demoMeta } from "../src/demo";
 import type { AdsReport, SiteReport } from "../src/types";
@@ -100,6 +100,7 @@ describe("diagnose", () => {
       expect(siteRole({ id: "x", url: "https://www.rikcorp.jp/" })).toBe("corporate");
       expect(siteRole({ id: "product", url: "https://products.rikcorp.jp/" })).toBe("product");
       expect(siteRole({ id: "x", url: "https://www.rik-support.net/share/" })).toBe("media");
+      expect(siteRole({ id: "x", url: "https://share.rikcorp.jp/" })).toBe("media");
       expect(siteRole({ id: "corp", role: "media" })).toBe("media");
       const d = diagnose(demoReport(2), DEMO_SITES[2]);
       expect(d.role).toBe("media");
@@ -146,6 +147,56 @@ describe("diagnose", () => {
 
       g.rikcadNews.sessions = { current: 0, previous: 1000 };
       expect(diagnose(r, DEMO_SITES[2]).items.map((i) => i.id)).toContain("measure-rikcad-news");
+    });
+
+    it("RIKシェアの移設で計測が止まっていた日を含む期間は、増減で判定しない", () => {
+      const ranges = resolveRanges("7d", "prev", new Date("2026-11-03T00:00:00Z"));
+      const r = { ...demoReport(2), range: "7d" as const, ...ranges };
+      const g = r.ga4!;
+      g.totals.activeUsers = { current: 50, previous: 800 };
+      g.rikcadNews = {
+        sessions: { current: 53, previous: 720 },
+        activeUsers: { current: 16, previous: 244 },
+        engagementRate: { current: 0.17, previous: 0.4 },
+      };
+      const d = diagnose(r, DEMO_SITES[2]);
+      const ids = d.items.map((i) => i.id);
+      expect(ids).toContain("measure-gap");
+      expect(ids).not.toContain("media-news-down");
+      expect(ids).not.toContain("media-users-down");
+      expect(d.items.find((i) => i.id === "measure-gap")!.evidence).toContain("10/23〜11/1");
+
+      // 移設後の日だけになれば、ふだんどおり判定する
+      const later = resolveRanges("7d", "prev", new Date("2026-11-17T00:00:00Z"));
+      const ids2 = diagnose({ ...r, ...later }, DEMO_SITES[2]).items.map((i) => i.id);
+      expect(ids2).not.toContain("measure-gap");
+      expect(ids2).toContain("media-news-down");
+
+      // ほかのサイトには影響しない
+      expect(diagnose({ ...demoReport(1), ...ranges }, DEMO_SITES[1]).items.map((i) => i.id)).not.toContain("measure-gap");
+    });
+
+    it("RIKシェアの旧URLは新URLに読み替え、/share/ 付きのページは同じ記事にまとめる", () => {
+      expect(withCurrentUrl({ id: "rikshare", name: "RIKシェア", url: "https://www.rik-support.net/share/" }).url).toBe("https://share.rikcorp.jp/");
+      expect(withCurrentUrl({ id: "corp", name: "コーポ", url: "https://www.rikcorp.jp/" }).url).toBe("https://www.rikcorp.jp/");
+      const g = mergeMovedPages({
+        ...demoReport(2).ga4!,
+        topPages: [
+          { path: "/share/rikcad-2d/", title: "2D", views: 300, users: 100, engagementRate: 0.5 },
+          { path: "/rikcad-2d/", title: "2D", views: 100, users: 40, engagementRate: 0.3 },
+          { path: "/share/", title: "トップ", views: 200, users: 80, engagementRate: 0.4 },
+        ],
+        landingPages: [
+          { path: "/share/", sessions: 100, engagementRate: 0.4, keyEvents: 1 },
+          { path: "/", sessions: 50, engagementRate: 0.1, keyEvents: 0 },
+        ],
+      });
+      expect(g.topPages.map((p) => [p.path, p.views])).toEqual([
+        ["/rikcad-2d/", 400],
+        ["/", 200],
+      ]);
+      expect(g.topPages[0].engagementRate).toBeCloseTo(0.45);
+      expect(g.landingPages).toEqual([{ path: "/", sessions: 150, engagementRate: 0.3, keyEvents: 1 }]);
     });
 
     it("製品サイトは今までどおり問い合わせ・資料請求で判定する", () => {

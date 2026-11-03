@@ -1,4 +1,4 @@
-import type { SiteConfig, SiteRole } from "./types";
+import type { DateRange, Ga4Report, MeasurementGap, SiteConfig, SiteRole } from "./types";
 
 // サイトごとの対象と目的（2026-10-26 マーケティンググループで整理）。
 // 診断ルールとAIアドバイスは、ここに書いた目的に沿った指標で評価する。
@@ -23,7 +23,7 @@ const PROFILES: Record<SiteRole, SiteProfile> = {
     purpose:
       "RIKのイベント・ニュースや、どんな会社か・なんの会社かを調べたい人に会社の情報を正しく伝える。RIKの各種サービスを紹介し、詳しいサイト（製品サイトなど）への入口になる。RIKCADやその他製品に興味がある人に、このサイトを通じてRIKの信頼性と興味を高め、将来の顧客に育てる。",
     kpis: ["製品サイトなど各サイトへの送客（リンクのクリック）", "サイト内の回遊（1訪問あたりのページ数・エンゲージメント率）", "訪問者数", "問い合わせ（主目的ではない）"],
-    sendTo: ["products.rikcorp.jp", "info.rikcorp.jp", "rik-support.net"],
+    sendTo: ["products.rikcorp.jp", "info.rikcorp.jp", "share.rikcorp.jp", "rik-support.net"],
   },
   product: {
     role: "product",
@@ -41,16 +41,95 @@ const PROFILES: Record<SiteRole, SiteProfile> = {
   },
 };
 
+/** RIKシェアのURL。2026-11-02 に www.rik-support.net/share/ から share.rikcorp.jp に移設した（旧URLは新URLへ転送） */
+export const RIKSHARE_URL = /rik-support\.net\/share|share\.rikcorp\.jp/;
+const RIKSHARE_NEW_URL = "https://share.rikcorp.jp/";
+
+/** SITES_JSON の url が移設前のままでも、画面とAIには新しいURLを出す */
+export function withCurrentUrl(site: SiteConfig): SiteConfig {
+  if (site.url && /rik-support\.net\/share/.test(site.url)) return { ...site, url: RIKSHARE_NEW_URL };
+  return site;
+}
+
 /** SITES_JSON の role、なければ id・URL からサイトの種類を決める。決められなければ製品サイトと同じ評価にする */
 export function siteRole(site: Pick<SiteConfig, "id" | "url" | "role">): SiteRole {
   if (site.role) return site.role;
   const id = site.id.toLowerCase();
   const url = site.url ?? "";
-  if (id === "rikshare" || /rik-support\.net\/share/.test(url)) return "media";
+  if (id === "rikshare" || RIKSHARE_URL.test(url)) return "media";
   if (id === "corp" || id === "corporate" || /\/\/(www\.)?rikcorp\.jp/.test(url)) return "corporate";
   return "product";
 }
 
 export function siteProfile(site: Pick<SiteConfig, "id" | "url" | "role">): SiteProfile {
   return PROFILES[siteRole(site)];
+}
+
+// 計測が止まっていた期間。この期間をまたぐ比較では、増減で良し悪しを判定しない。
+// SITES_JSON の measurementGaps で上書き・追加できる。
+const MEDIA_GAPS: MeasurementGap[] = [
+  {
+    start: "2026-10-23",
+    end: "2026-11-01",
+    reason: "RIKシェアを share.rikcorp.jp へ移設する作業",
+  },
+];
+
+export function measurementGaps(site: Pick<SiteConfig, "id" | "url" | "role" | "measurementGaps">): MeasurementGap[] {
+  if (site.measurementGaps) return site.measurementGaps;
+  return siteRole(site) === "media" ? MEDIA_GAPS : [];
+}
+
+const overlaps = (gap: MeasurementGap, r: DateRange) => gap.start <= r.endDate && gap.end >= r.startDate;
+
+/** 対象期間か比較期間に重なる、計測が止まっていた期間 */
+export function gapsInRanges(gaps: MeasurementGap[], current: DateRange, previous: DateRange): MeasurementGap[] {
+  return gaps.filter((g) => overlaps(g, current) || overlaps(g, previous));
+}
+
+/** 「10/23〜11/1」の形 */
+export function gapLabel(g: MeasurementGap): string {
+  const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
+  return `${md(g.start)}〜${md(g.end)}`;
+}
+
+/** 移設前の /share/ 付きのパスを新しいパスにそろえる（同じ記事を1行にまとめる） */
+export function normalizeRikSharePath(path: string): string {
+  return path.replace(/^\/share(?=\/|$)/, "") || "/";
+}
+
+/** RIKシェアのページ一覧で、移設前後の同じ記事をまとめる。users は足し算なので重複を含む */
+export function mergeMovedPages(g: Ga4Report): Ga4Report {
+  const pages = new Map<string, Ga4Report["topPages"][number]>();
+  for (const p of g.topPages) {
+    const path = normalizeRikSharePath(p.path);
+    const a = pages.get(path);
+    if (!a) {
+      pages.set(path, { ...p, path });
+      continue;
+    }
+    const views = a.views + p.views;
+    a.engagementRate = views ? (a.engagementRate * a.views + p.engagementRate * p.views) / views : 0;
+    a.views = views;
+    a.users += p.users;
+    if (!a.title && p.title) a.title = p.title;
+  }
+  const landing = new Map<string, Ga4Report["landingPages"][number]>();
+  for (const p of g.landingPages) {
+    const path = normalizeRikSharePath(p.path);
+    const a = landing.get(path);
+    if (!a) {
+      landing.set(path, { ...p, path });
+      continue;
+    }
+    const sessions = a.sessions + p.sessions;
+    a.engagementRate = sessions ? (a.engagementRate * a.sessions + p.engagementRate * p.sessions) / sessions : 0;
+    a.sessions = sessions;
+    a.keyEvents += p.keyEvents;
+  }
+  return {
+    ...g,
+    topPages: [...pages.values()].sort((a, b) => b.views - a.views),
+    landingPages: [...landing.values()].sort((a, b) => b.sessions - a.sessions),
+  };
 }

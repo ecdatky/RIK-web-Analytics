@@ -380,6 +380,7 @@ h3.sub { margin: 4px 0 -6px; color: var(--text-muted); font-size: 12px; letter-s
 .hero-points li.up::before { content: "▲"; background: var(--good); }
 .hero-points li.down::before { content: "▼"; background: var(--critical); }
 .hero-points li.none { color: var(--text-muted); padding-left: 12px; }
+.hero-gap { position: relative; z-index: 1; margin: 0; padding: 8px 12px; border-radius: 12px; background: var(--surface-1); font-size: 13px; color: var(--text-muted); }
 @media (max-width: 700px) { .hero-points { grid-template-columns: 1fr; } .hero { padding: 18px; } }
 
 .meter { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; position: relative; z-index: 1; }
