@@ -55,9 +55,12 @@ describe("担当者のコメント", () => {
     const later = new Date(Date.now() + 60_000);
     const u = await updateNote(env, site.id, a.id, "Peatixに誘導。申込はPeatixで確認", "b@rikcorp.jp", later);
     expect(u.updatedBy).toBe("b@rikcorp.jp");
-    expect(notesUpdatedAt(await listNotes(env, site.id))).toBe(later.toISOString());
+    const afterEdit = notesUpdatedAt(await listNotes(env, site.id));
+    expect(afterEdit).toBeTruthy();
 
+    // 古いコメントを消しても印が変わる（ひとことの作り直し案内を出すため）
     await deleteNote(env, site.id, a.id);
+    expect(notesUpdatedAt(await listNotes(env, site.id))).not.toBe(afterEdit);
     expect((await listNotes(env, site.id)).map((n) => n.target)).toEqual(["scope:meta"]);
     await expect(deleteNote(env, site.id, a.id)).rejects.toThrow("見つかりません");
   });
@@ -66,6 +69,7 @@ describe("担当者のコメント", () => {
     const env = { CACHE: memoryKv() } as unknown as Env;
     await expect(addNote(env, site.id, { target: "item:x", text: "  " }, "a")).rejects.toThrow("空");
     await expect(addNote(env, site.id, { target: "scope:foo", text: "x" }, "a")).rejects.toThrow("付け先");
+    await expect(addNote(env, site.id, { target: "scope:constructor", text: "x" }, "a")).rejects.toThrow("付け先");
     await expect(addNote(env, site.id, { target: "item:x", text: "あ".repeat(1001) }, "a")).rejects.toThrow("1000文字");
   });
 

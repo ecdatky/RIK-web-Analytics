@@ -780,7 +780,7 @@ async function renderSummary() {
   $("#sum-cards").innerHTML = rows
     .map(({ s, report, advice, diagnosis, error }) => {
       const h = !error && health(report);
-      const todo = diagnosis?.items.filter((i) => i.severity !== "low").length ?? 0;
+      const todo = diagnosis?.items.filter((i) => i.severity !== "low" && !i.explained).length ?? 0;
       if (!h) return "";
       const l = LEVELS[h.level];
       const point = h.gapOnly
@@ -1625,6 +1625,12 @@ function renderDiagnosis(d, siteId) {
     <p class="muted small">決まった基準で数字を自動チェックした結果です。表示中の期間・比較のデータを取り直すたびに診断し直します。コメントのある項目は、AIがコメントを踏まえて見出し・行動・優先度を書き直しています。広告やGA4の設定は自動では変更しません。</p>`;
 }
 
+/** 開いている入力欄を閉じる。編集中で隠していたコメントは元に戻す */
+function closeNoteForms() {
+  $$(".note-form").forEach((f) => f.remove());
+  $$(".note[hidden]").forEach((v) => (v.hidden = false));
+}
+
 /** コメントを保存・削除したあと、診断とAIのひとことを読み直す */
 async function reloadAfterNote(siteId) {
   const box = $("#sec-diagnosis");
@@ -1632,6 +1638,10 @@ async function reloadAfterNote(siteId) {
   try {
     const { diagnosis } = await api(diagnosisUrl(siteId));
     renderDiagnosis(diagnosis, siteId);
+  } catch {
+    // 保存はできている。読み直しだけ失敗したので、入力欄を閉じて案内する
+    closeNoteForms();
+    box?.insertAdjacentHTML("afterbegin", `<div class="alert">コメントは保存しました。診断の読み直しに失敗したため、少し待ってから画面を再読み込みしてください。</div>`);
   } finally {
     $(".note-busy")?.remove();
   }
@@ -1650,7 +1660,7 @@ document.addEventListener("click", async (e) => {
   }
   const siteId = t.dataset.site;
   if (t.classList.contains("note-add")) {
-    $$(".note-form").forEach((f) => f.remove());
+    closeNoteForms();
     const html = noteForm({ siteId, target: t.dataset.target, label: t.dataset.label, chooseScope: !!t.dataset.scope });
     if (t.dataset.scope) t.closest(".notes-panel").querySelector(".notes-add-slot").innerHTML = html;
     else t.closest(".diag-links").insertAdjacentHTML("beforebegin", html);
@@ -1660,7 +1670,7 @@ document.addEventListener("click", async (e) => {
   const note = state.diagnosis?.d.notes?.find((n) => n.id === t.dataset.id);
   if (t.classList.contains("note-edit")) {
     if (!note) return;
-    $$(".note-form").forEach((f) => f.remove());
+    closeNoteForms();
     const view = t.closest(".note");
     view.hidden = true;
     view.insertAdjacentHTML("afterend", noteForm({ siteId, id: note.id, text: note.text }));
@@ -1672,11 +1682,12 @@ document.addEventListener("click", async (e) => {
     t.disabled = true;
     try {
       await api(notesUrl(siteId, t.dataset.id), { method: "DELETE", headers: { "content-type": "application/json" } });
-      await reloadAfterNote(siteId);
     } catch (err) {
       t.disabled = false;
       t.closest(".note").insertAdjacentHTML("beforeend", `<div class="alert">${esc(err.message)}</div>`);
+      return;
     }
+    await reloadAfterNote(siteId);
   }
 });
 
@@ -1699,12 +1710,14 @@ document.addEventListener("submit", async (e) => {
       const targetLabel = form.dataset.label || undefined;
       await api(notesUrl(siteId), { method: "POST", headers, body: JSON.stringify({ target, targetLabel, text }) });
     }
-    await reloadAfterNote(siteId);
   } catch (err) {
     btn.disabled = false;
     btn.textContent = "保存";
     form.insertAdjacentHTML("beforeend", `<div class="alert">${esc(err.message)}</div>`);
+    return;
   }
+  btn.textContent = "保存しました";
+  await reloadAfterNote(siteId);
 });
 
 function drawTrend(g) {
