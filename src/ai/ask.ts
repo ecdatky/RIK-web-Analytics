@@ -3,6 +3,7 @@ import type { Advice, Env, SiteConfig, SiteReport } from "../types";
 import type { Diagnosis } from "../diagnosis";
 import { siteProfile } from "../sites";
 import { buildDigest } from "./advice";
+import { notesDigest, type SiteNote } from "../notes";
 
 // ダッシュボードの利用者が、表示中のサイト・期間のデータや画面の見方について自由に質問し、AIが答える。
 // 会話は画面側で持ち、毎回の質問と一緒に送られてくる（サーバーには保存しない）。
@@ -23,6 +24,8 @@ export interface AskSiteContext {
   report: SiteReport | null;
   diagnosis: Diagnosis | null;
   advice: Advice | null;
+  /** 担当者のコメント（事情・補足） */
+  notes?: SiteNote[];
 }
 
 const SCREEN_GUIDE = `## ダッシュボードの画面構成
@@ -34,6 +37,7 @@ const SCREEN_GUIDE = `## ダッシュボードの画面構成
   2. 今日の速報とリアルタイム。
   3. AIのひとこと: AIが期間の状況を短くまとめたもの（判定・見出し・要約・用語）。「28日・直前と比較」は毎朝7時に自動で作られ、他の組み合わせは「AIの総評を作る」を押すと30秒〜1分でできる。作ったものは全員の画面に出て、日付が変わると消える。5分以内の作り直しはしない。
   4. 診断・次の行動: 決まったルールで数字をチェックし、問題点・根拠・次にできる行動・操作する場所を優先度（高・中・低）付きで出す。AIではないので毎回同じ基準。データを取り直すたびに自動で作り直し、「最新データで再診断」でもやり直せる。
+     各項目の「事情・補足をコメントする」で、担当者がデータからは分からない事情（例: Meta広告はPeatixに誘導していて計測できない、意図して止めている、対応済み）を書ける。欄の下の「事情・補足コメント」では、サイト全体・アクセス解析・Google広告・SNS広告ごとにも書ける。コメントは全員の画面に出て、期間を切り替えても残り、編集・削除できる。コメントがある項目は、AIが見出し・次にできる行動・優先度をコメントを踏まえて書き直し「コメントを反映」と表示する（元の診断は「コメントを反映する前の診断」で見られる）。事情で説明がつく項目は「事情あり・対応不要」として一番下に回し、要対応の件数に数えない。AIのひとことと、この質問への回答もコメントを踏まえる。AIのひとことを作った後にコメントが変わると、ひとことの欄に作り直しの案内が出る。
   5. サイトのアクセス解析（GA4、オレンジ）: ユーザー・新規ユーザー・セッション・表示回数・エンゲージメント率・平均セッション時間・キーイベント、日別推移グラフ（比較期間の線と、目立った日の注記付き）、チャネル別・デバイス別、参照元/メディア、よく見られているページ、「AIからのアクセス」（ChatGPT・Gemini・Perplexity・Copilot・Claude などAIの回答のリンクから来た訪問の数・全訪問に占める割合・来た人・エンゲージメント率・キーイベントと、AI別の内訳）、よく見られているページ、ランディングページ、他サイトへのリンクのクリック。RIKシェアは「RIKCADお知らせ」経由の閲覧も出る。
   6. 検索・ディスプレイ広告の成果（Google広告、緑）: 費用・クリック・成果・CPA、日別の広告費と成果、キャンペーン別の費用対効果（インプレッションシェア、予算・広告ランクによる損失）、配信した広告、キーワード、実際に検索された語句、デバイス別。
   7. SNS広告の成果（Meta広告＝Facebook・Instagram、紫）: 費用・リーチ・フリークエンシー・クリック・CTR・CPC・CPM・成果・CPA、配信面別、キャンペーン別、配信した広告、リンク先、GA4で計測した広告経由のサイトでの成果。
@@ -73,7 +77,8 @@ ${SCREEN_GUIDE}
 最初のメッセージに、利用者がいま見ている画面のデータ（JSON）があります。view.tab が "summary" ならサマリー画面で全サイト分、そうでなければそのサイトだけです。各サイトには、集計データ（report）、ルールによる診断結果（diagnosis）、その期間のAIのひとこと（advice、無ければ null）が入っています。
 - report.period.current が対象期間、comparison が比較用の期間です。ga4.today は今日の速報値です。
 - ads.source が "ga4" の場合は、GA4にリンクされたGoogle広告の費用・クリックと、GA4で計測した成果です。インプレッションシェアは取れません。
-- Meta広告の destinations は広告のリンク先別の費用です。peatix.com などイベント受付サービス行きが大半なら、Meta側のCVが0なのは計測上当然です。`;
+- Meta広告の destinations は広告のリンク先別の費用です。peatix.com などイベント受付サービス行きが大半なら、Meta側のCVが0なのは計測上当然です。
+- teamNotes は担当者が画面に書いた事情・補足のコメントです。データからは分からない事実として受け止め、コメントで説明がつく点を問題として扱わず、コメントで不要・不可能とされた施策は勧めません。診断の項目に notes / original があるものは、コメントを踏まえて書き直した項目です（original が元の診断、explained が true なら事情で説明がつき対応不要）。`
 
 function siteBlock(c: AskSiteContext) {
   const p = siteProfile(c.site);
@@ -88,6 +93,7 @@ function siteBlock(c: AskSiteContext) {
       items: c.diagnosis.items.map(({ id: _id, ...i }) => i),
       passed: c.diagnosis.passed,
     },
+    teamNotes: c.notes?.length ? notesDigest(c.notes) : undefined,
     advice: c.advice && {
       generatedAt: c.advice.generatedAt,
       status: c.advice.status,

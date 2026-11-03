@@ -10,6 +10,8 @@ const state = {
   metric: "activeUsers",
   charts: [],
   realtimeTimer: null,
+  /** サイトごとの、担当者のコメントの最終更新（AIのひとことがコメントを踏まえているかの判定） */
+  notesAt: {},
 };
 
 try {
@@ -26,6 +28,7 @@ const remember = () => {
 
 // ---------- utils ----------
 const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const fmtInt = (n) => Math.round(n).toLocaleString("ja-JP");
@@ -1384,6 +1387,10 @@ function adviceProgress(p) {
   </div>`;
 }
 
+/** ひとことを作った後にコメントが変わったか */
+const notesOutdated = (advice, siteId) =>
+  siteId in state.notesAt && (advice.notesAt ?? null) !== (state.notesAt[siteId] ?? null);
+
 function renderAdvice(advice, siteId, progress = null) {
   const shown = adviceMatchesView(advice) ? advice : null;
   const meta = shown
@@ -1398,7 +1405,7 @@ function renderAdvice(advice, siteId, progress = null) {
       ${busy ? adviceProgress(progress) : ""}
       ${
         shown
-          ? `${shown.headline ? `<p class="headline">${esc(shown.headline)}</p>` : ""}<p class="summary">${esc(shown.summary)}</p>${
+          ? `${notesOutdated(shown, siteId) ? `<p class="note-outdated">事情・補足コメントが追加・変更されています。「作り直す」を押すと、コメントを踏まえたひとことになります。</p>` : ""}${shown.headline ? `<p class="headline">${esc(shown.headline)}</p>` : ""}<p class="summary">${esc(shown.summary)}</p>${
               shown.glossary?.length ? glossaryBlock(shown.glossary) : ""
             }`
           : busy
@@ -1423,7 +1430,8 @@ const sameView = (siteId, range, compare) => state.tab === siteId && state.range
 async function loadAdvice(siteId) {
   const { range, compare } = state;
   clearTimeout(state.advicePoll);
-  const { advice, job } = await api(adviceUrl(siteId));
+  const { advice, job, notesAt } = await api(adviceUrl(siteId));
+  state.notesAt[siteId] = notesAt ?? null;
   if (!sameView(siteId, range, compare)) return;
   if (advice || !job) return renderAdvice(advice, siteId);
   renderAdvice(null, siteId, { stage: "start", pct: null, startedAt: Date.parse(job.startedAt), by: job.by });
@@ -1507,34 +1515,88 @@ const fmtDay = (ymd) => {
   return `${m}/${d}`;
 };
 
+// ---------- 担当者のコメント（事情・補足） ----------
+// 診断の項目や、サイト全体・領域ごとにコメントを書ける。診断・AIのひとこと・AIへの質問はコメントを踏まえた表現になる。
+const NOTE_SCOPES = { site: "サイト全体", ga4: "アクセス解析", ads: "Google広告", meta: "SNS広告" };
+const NOTE_PLACEHOLDER =
+  "例: Meta広告はPeatixのイベントページに誘導しているため、サイト側では申込を計測できません。申込数はPeatixの管理画面で確認しています。";
+const notesUrl = (siteId, id) => `/api/notes?site=${encodeURIComponent(siteId)}${id ? `&id=${encodeURIComponent(id)}` : ""}`;
+const noteWho = (n) => `${esc(n.updatedBy ?? n.by)}・${fmtTime(n.updatedAt)}${n.updatedAt !== n.createdAt ? " 更新" : ""}`;
+
+/** コメントの入力欄。id があれば編集、無ければ新規 */
+function noteForm({ siteId, target = "", label = "", id = "", text = "", chooseScope = false }) {
+  return `<form class="note-form" data-site="${esc(siteId)}" data-target="${esc(target)}" data-label="${esc(label)}" data-id="${esc(id)}">
+    ${
+      chooseScope
+        ? `<label class="note-scope">コメントの対象 <select name="target">${Object.entries(NOTE_SCOPES)
+            .map(([k, v]) => `<option value="scope:${k}">${v}</option>`)
+            .join("")}</select></label>`
+        : ""
+    }
+    <textarea name="text" rows="3" maxlength="1000" required placeholder="${esc(NOTE_PLACEHOLDER)}">${esc(text)}</textarea>
+    <div class="note-form-btns"><button type="submit" class="btn btn-primary">保存</button><button type="button" class="btn note-cancel">やめる</button>
+    <span class="muted small">保存すると、診断の文面とAIの回答がこのコメントを踏まえた表現に変わります（全員の画面に反映）。</span></div>
+  </form>`;
+}
+
+/** 保存済みのコメント1件（編集・削除ボタン付き） */
+function noteView(n, siteId, { showTarget = false } = {}) {
+  return `<div class="note" data-note="${esc(n.id)}">
+    <div class="note-head"><b>コメント</b>${showTarget ? `<span class="note-target">${esc(noteTargetLabel(n))}</span>` : ""}<span class="muted small">${noteWho(n)}</span>
+      <span class="note-btns"><button type="button" class="link-btn note-edit" data-site="${esc(siteId)}" data-id="${esc(n.id)}">編集</button><button type="button" class="link-btn note-del" data-site="${esc(siteId)}" data-id="${esc(n.id)}">削除</button></span></div>
+    <p class="note-text">${esc(n.text)}</p>
+  </div>`;
+}
+const noteTargetLabel = (n) => (n.target.startsWith("scope:") ? NOTE_SCOPES[n.target.slice(6)] ?? "" : `診断「${n.targetLabel}」`);
+
 function renderDiagnosis(d, siteId) {
   const box = $("#sec-diagnosis");
   if (!box) return;
   // 読み込み中に期間を切り替えた場合など、表示中の期間と違う診断は出さない
   if ((d.range ?? "28d") !== state.range || (d.compare ?? "prev") !== state.compare) return;
+  state.diagnosis = { siteId, d };
+  const allNotes = d.notes ?? [];
+  const byId = new Map(allNotes.map((n) => [n.id, n]));
+  const open = d.items.filter((i) => !i.explained);
+  const explained = d.items.filter((i) => i.explained);
   const counts = { high: 0, medium: 0, low: 0 };
-  d.items.forEach((i) => counts[i.severity]++);
-  const summary = d.items.length
+  open.forEach((i) => counts[i.severity]++);
+  const summary = open.length
     ? Object.entries(counts)
         .filter(([, n]) => n)
         .map(([k, n]) => `<span class="sev sev-${k}">${SEVERITY[k].label} ${n}件</span>`)
         .join("")
     : `<span class="sev sev-ok">対応が必要な問題は見つかりませんでした</span>`;
-  const actions = d.items
-    .map(
-      (i, n) => `<li class="diag-item sev-${i.severity}">
+  const explainedTag = explained.length ? `<span class="sev sev-noted">コメントで事情あり ${explained.length}件</span>` : "";
+  const item = (i, n) => {
+    const own = (i.notes ?? []).filter((x) => x.scope === "この項目");
+    const shared = (i.notes ?? []).filter((x) => x.scope !== "この項目");
+    const sev = i.explained ? `<span class="sev sev-noted">事情あり・対応不要</span>` : `<span class="sev sev-${i.severity}">${SEVERITY[i.severity].label}</span>`;
+    return `<li class="diag-item sev-${i.severity}${i.explained ? " explained" : ""}">
         <span class="diag-num" aria-hidden="true">${n + 1}</span>
         <div class="diag-body">
-          <div class="diag-tags"><span class="sev sev-${i.severity}">${SEVERITY[i.severity].label}</span><span class="area area-${i.area}">${AREA[i.area] ?? ""}</span></div>
+          <div class="diag-tags">${sev}<span class="area area-${i.area}">${AREA[i.area] ?? ""}</span>${i.original ? `<span class="note-tag">コメントを反映</span>` : ""}</div>
           <p class="diag-title">${esc(i.title)}</p>
           <p class="diag-evidence">${esc(i.evidence)}</p>
           <div class="diag-action"><b>次にできる行動</b><p>${esc(i.action)}</p></div>
           <p class="diag-where"><b>操作する場所</b>${esc(i.where)}</p>
-          <button type="button" class="ask-link" data-ask="${esc(`診断の「${i.title}」について、原因と対応の進め方をもう少し詳しく教えて`)}">この点をAIに質問する</button>
+          ${
+            i.original
+              ? `<details class="diag-original"><summary>コメントを反映する前の診断</summary><p><span class="sev sev-${i.original.severity}">${SEVERITY[i.original.severity].label}</span> ${esc(i.original.title)}</p><p class="muted small">${esc(i.original.action)}</p></details>`
+              : ""
+          }
+          ${own.map((x) => noteView(byId.get(x.id) ?? { ...x, createdAt: x.updatedAt, target: `item:${i.id}`, targetLabel: i.title }, siteId)).join("")}
+          ${shared.map((x) => `<p class="note-shared muted small">${esc(x.scope)}へのコメントを踏まえています：「${esc(x.text)}」</p>`).join("")}
+          <div class="diag-links">
+            <button type="button" class="link-btn note-add" data-site="${esc(siteId)}" data-target="item:${esc(i.id)}" data-label="${esc(i.original?.title ?? i.title)}">${own.length ? "コメントを追加" : "事情・補足をコメントする"}</button>
+            <button type="button" class="ask-link" data-ask="${esc(`診断の「${i.title}」について、原因と対応の進め方をもう少し詳しく教えて`)}">この点をAIに質問する</button>
+          </div>
         </div>
-      </li>`,
-    )
-    .join("");
+      </li>`;
+  };
+  // いまの診断に出ている項目のコメント以外（サイト全体・領域・いまは出ていない項目）を一覧にする
+  const shownItemTargets = new Set(d.items.map((i) => `item:${i.id}`));
+  const otherNotes = allNotes.filter((n) => !shownItemTargets.has(n.target));
   box.innerHTML = `<div class="chart-head"><h2 style="margin:0">診断結果と次にできる行動</h2>
       <div><button class="btn" id="diag-run" data-site="${esc(siteId)}">最新データで再診断</button></div></div>
     <dl class="diag-meta">
@@ -1547,15 +1609,103 @@ function renderDiagnosis(d, siteId) {
         ? `<p class="diag-purpose"><b>このサイトの目的</b>${esc(d.purpose.label)}<span class="muted">（重視する指標: ${d.purpose.kpis.slice(0, 2).map(esc).join("、")}）</span></p>`
         : ""
     }
-    <div class="diag-summary">${summary}</div>
-    ${d.items.length ? `<ol class="diag-list">${actions}</ol>` : ""}
+    <div class="diag-summary">${summary}${explainedTag}</div>
+    ${d.items.length ? `<ol class="diag-list">${[...open, ...explained].map(item).join("")}</ol>` : ""}
     ${
       d.passed.length
         ? `<div class="diag-passed"><b>問題なしだった点</b><ul>${d.passed.map((p) => `<li>${esc(p)}</li>`).join("")}</ul></div>`
         : ""
     }
-    <p class="muted small">決まった基準で数字を自動チェックした結果です。表示中の期間・比較のデータを取り直すたびに診断し直します。広告やGA4の設定は自動では変更しません。</p>`;
+    <div class="notes-panel">
+      <div class="notes-panel-head"><b>事情・補足コメント</b><button type="button" class="link-btn note-add" data-site="${esc(siteId)}" data-scope="1">サイト全体や広告ごとにコメントする</button></div>
+      <p class="muted small">データからは分からない事情（外部サービスに誘導していて計測できない、意図して止めている、対応済み など）を書いておくと、診断・AIのひとこと・AIへの質問がそれを踏まえた表現になります。期間を切り替えても残ります。</p>
+      <div class="notes-add-slot"></div>
+      ${otherNotes.map((n) => noteView(n, siteId, { showTarget: true })).join("")}
+    </div>
+    <p class="muted small">決まった基準で数字を自動チェックした結果です。表示中の期間・比較のデータを取り直すたびに診断し直します。コメントのある項目は、AIがコメントを踏まえて見出し・行動・優先度を書き直しています。広告やGA4の設定は自動では変更しません。</p>`;
 }
+
+/** コメントを保存・削除したあと、診断とAIのひとことを読み直す */
+async function reloadAfterNote(siteId) {
+  const box = $("#sec-diagnosis");
+  box?.insertAdjacentHTML("afterbegin", `<p class="note-busy" role="status">コメントを診断に反映しています…</p>`);
+  try {
+    const { diagnosis } = await api(diagnosisUrl(siteId));
+    renderDiagnosis(diagnosis, siteId);
+  } finally {
+    $(".note-busy")?.remove();
+  }
+  loadAdvice(siteId).catch(() => undefined);
+}
+
+document.addEventListener("click", async (e) => {
+  const t = e.target.closest?.(".note-add, .note-edit, .note-del, .note-cancel");
+  if (!t) return;
+  if (t.classList.contains("note-cancel")) {
+    const form = t.closest(".note-form");
+    const view = form.previousElementSibling;
+    if (view?.classList.contains("note") && view.hidden) view.hidden = false;
+    form.remove();
+    return;
+  }
+  const siteId = t.dataset.site;
+  if (t.classList.contains("note-add")) {
+    $$(".note-form").forEach((f) => f.remove());
+    const html = noteForm({ siteId, target: t.dataset.target, label: t.dataset.label, chooseScope: !!t.dataset.scope });
+    if (t.dataset.scope) t.closest(".notes-panel").querySelector(".notes-add-slot").innerHTML = html;
+    else t.closest(".diag-links").insertAdjacentHTML("beforebegin", html);
+    t.closest(".diag-body, .notes-panel").querySelector(".note-form textarea").focus();
+    return;
+  }
+  const note = state.diagnosis?.d.notes?.find((n) => n.id === t.dataset.id);
+  if (t.classList.contains("note-edit")) {
+    if (!note) return;
+    $$(".note-form").forEach((f) => f.remove());
+    const view = t.closest(".note");
+    view.hidden = true;
+    view.insertAdjacentHTML("afterend", noteForm({ siteId, id: note.id, text: note.text }));
+    view.nextElementSibling.querySelector("textarea").focus();
+    return;
+  }
+  if (t.classList.contains("note-del")) {
+    if (!confirm("このコメントを削除しますか？診断とAIの回答は、コメントが無い状態の表現に戻ります。")) return;
+    t.disabled = true;
+    try {
+      await api(notesUrl(siteId, t.dataset.id), { method: "DELETE", headers: { "content-type": "application/json" } });
+      await reloadAfterNote(siteId);
+    } catch (err) {
+      t.disabled = false;
+      t.closest(".note").insertAdjacentHTML("beforeend", `<div class="alert">${esc(err.message)}</div>`);
+    }
+  }
+});
+
+document.addEventListener("submit", async (e) => {
+  const form = e.target.closest?.(".note-form");
+  if (!form) return;
+  e.preventDefault();
+  const siteId = form.dataset.site;
+  const text = form.elements.text.value.trim();
+  if (!text) return;
+  const btn = form.querySelector('button[type="submit"]');
+  btn.disabled = true;
+  btn.textContent = "保存中…";
+  const headers = { "content-type": "application/json" };
+  try {
+    if (form.dataset.id) {
+      await api(notesUrl(siteId, form.dataset.id), { method: "PUT", headers, body: JSON.stringify({ text }) });
+    } else {
+      const target = form.elements.target?.value ?? form.dataset.target;
+      const targetLabel = form.dataset.label || undefined;
+      await api(notesUrl(siteId), { method: "POST", headers, body: JSON.stringify({ target, targetLabel, text }) });
+    }
+    await reloadAfterNote(siteId);
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "保存";
+    form.insertAdjacentHTML("beforeend", `<div class="alert">${esc(err.message)}</div>`);
+  }
+});
 
 function drawTrend(g) {
   const canvas = $("#trend");

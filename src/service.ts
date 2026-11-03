@@ -9,6 +9,7 @@ import { generateAdvice } from "./ai/advice";
 import { diagnose, type Diagnosis } from "./diagnosis";
 import { RIKSHARE_URL, mergeMovedPages, siteRole, withCurrentUrl } from "./sites";
 import { DEMO_SITES, demoAdvice, demoAds, demoGa4, demoMeta } from "./demo";
+import { listNotes, notesUpdatedAt } from "./notes";
 
 export function isDemo(env: Env): boolean {
   return env.DEMO_MODE === "true" || !env.SITES_JSON;
@@ -204,13 +205,19 @@ export async function refreshAdvice(
   try {
     let advice: Advice;
     progress("data", 5);
+    // 担当者のコメント（事情・補足）を踏まえて書く
+    const notes = await listNotes(env, site.id);
     if (isDemo(env) && !env.ANTHROPIC_API_KEY) {
-      advice = demoAdvice(site, range, compare);
+      advice = { ...demoAdvice(site, range, compare), notesAt: notesUpdatedAt(notes) };
     } else {
       const report = (await getCachedReport(env, site.id, range, compare)) ?? (await refreshReport(env, site, range, compare));
       progress("thinking", 15);
-      advice = await generateAdvice(env, site, report, (chars) =>
-        progress("writing", Math.min(95, 20 + Math.round((chars / EXPECTED_ADVICE_CHARS) * 75))),
+      advice = await generateAdvice(
+        env,
+        site,
+        report,
+        (chars) => progress("writing", Math.min(95, 20 + Math.round((chars / EXPECTED_ADVICE_CHARS) * 75))),
+        notes,
       );
     }
     progress("saving", 97);
