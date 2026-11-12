@@ -4,6 +4,8 @@ export interface Env {
 
   // vars
   SITES_JSON?: string;
+  /** SITES_JSON に足すサイト（同じ形式の配列。同じ id は置き換え）。管理画面の変数で設定する */
+  SITES_EXTRA_JSON?: string;
   DEMO_MODE?: string;
   AUTH_DISABLED?: string;
   ACCESS_TEAM_DOMAIN?: string; // 例: rikcorp.cloudflareaccess.com
