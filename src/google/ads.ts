@@ -161,19 +161,44 @@ async function fetchAdCreatives(env: Env, cid: string, between: string): Promise
   }
 }
 
-function totalsQuery(r: DateRange) {
-  return `SELECT metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value
-          FROM customer WHERE segments.date BETWEEN '${r.startDate}' AND '${r.endDate}'`;
+/** LIKE の特殊文字（% _ [ ]）を文字として扱う */
+const likeEscape = (s: string) => s.replace(/[%_[\]]/g, (c) => `[${c}]`);
+
+/**
+ * 1つの広告アカウントで複数のサイトの広告を出している場合に、キャンペーン名で絞り込む条件。
+ * 絞り込むときはアカウント全体（FROM customer）ではなくキャンペーン単位で集計する。
+ */
+export function campaignScope(nameContains?: string): { from: string; where: string } {
+  const name = nameContains?.trim();
+  if (!name) return { from: "customer", where: "" };
+  return { from: "campaign", where: ` AND campaign.name LIKE ${quote(`%${likeEscape(name)}%`)}` };
 }
 
-export async function fetchAds(env: Env, customerIds: string[], current: DateRange, previous: DateRange): Promise<AdsReport> {
+function totalsQuery(r: DateRange, scope = campaignScope()) {
+  return `SELECT metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value
+          FROM ${scope.from} WHERE segments.date BETWEEN '${r.startDate}' AND '${r.endDate}'${scope.where}`;
+}
+
+export interface FetchAdsOptions {
+  /** キャンペーン名にこの文字を含むキャンペーンだけを数える（SITES_JSON の adsCampaignNameContains） */
+  campaignNameContains?: string;
+}
+
+export async function fetchAds(
+  env: Env,
+  customerIds: string[],
+  current: DateRange,
+  previous: DateRange,
+  opts: FetchAdsOptions = {},
+): Promise<AdsReport> {
+  const scope = campaignScope(opts.campaignNameContains);
   const perAccount = await Promise.all(
     customerIds.map(async (cid) => {
-      const between = `segments.date BETWEEN '${current.startDate}' AND '${current.endDate}'`;
+      const between = `segments.date BETWEEN '${current.startDate}' AND '${current.endDate}'${scope.where}`;
       const [cur, prev, daily, campaigns, devices, keywords, searchTerms, creatives] = await Promise.all([
-        gaql(env, cid, totalsQuery(current)),
-        gaql(env, cid, totalsQuery(previous)),
-        gaql(env, cid, `SELECT segments.date, metrics.cost_micros, metrics.clicks, metrics.conversions FROM customer WHERE ${between}`),
+        gaql(env, cid, totalsQuery(current, scope)),
+        gaql(env, cid, totalsQuery(previous, scope)),
+        gaql(env, cid, `SELECT segments.date, metrics.cost_micros, metrics.clicks, metrics.conversions FROM ${scope.from} WHERE ${between}`),
         gaql(
           env,
           cid,
@@ -188,7 +213,7 @@ export async function fetchAds(env: Env, customerIds: string[], current: DateRan
         gaql(
           env,
           cid,
-          `SELECT segments.device, metrics.cost_micros, metrics.clicks, metrics.conversions FROM customer WHERE ${between}`,
+          `SELECT segments.device, metrics.cost_micros, metrics.clicks, metrics.conversions FROM ${scope.from} WHERE ${between}`,
         ),
         gaql(
           env,

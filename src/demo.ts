@@ -7,6 +7,7 @@ export const DEMO_SITES: SiteConfig[] = [
   { id: "corp", name: "コーポレートサイト", url: "https://www.rikcorp.jp/", ga4PropertyId: "demo", adsCustomerIds: ["demo-1"], metaAdAccountIds: ["demo-m1"] },
   { id: "product", name: "製品サイト", ga4PropertyId: "demo", adsCustomerIds: ["demo-2"] },
   { id: "rikshare", name: "RIKシェア", ga4PropertyId: "demo", adsCustomerIds: ["demo-3"], metaAdAccountIds: ["demo-m2"] },
+  { id: "openex", name: "OPEN EX 業務管理", url: "https://open-ex.jp/", ga4PropertyId: "demo", adsCustomerIds: ["demo-4"], adsCampaignNameContains: "OPEN EX" },
   { id: "other", name: "その他サイト", ga4PropertyId: "demo" },
 ];
 

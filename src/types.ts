@@ -4,6 +4,8 @@ export interface Env {
 
   // vars
   SITES_JSON?: string;
+  /** SITES_JSON に足すサイト（同じ形式の配列。同じ id は置き換え）。管理画面の変数で設定する */
+  SITES_EXTRA_JSON?: string;
   DEMO_MODE?: string;
   AUTH_DISABLED?: string;
   ACCESS_TEAM_DOMAIN?: string; // 例: rikcorp.cloudflareaccess.com
@@ -28,7 +30,7 @@ export interface Env {
 }
 
 /** corporate: コーポレートサイト / product: 製品サイト / media: オウンドメディア（RIKシェア） */
-export type SiteRole = "corporate" | "product" | "media";
+export type SiteRole = "corporate" | "product" | "media" | "service";
 
 export interface SiteConfig {
   id: string;
@@ -36,6 +38,8 @@ export interface SiteConfig {
   url?: string;
   ga4PropertyId?: string;
   adsCustomerIds?: string[];
+  /** Google広告アカウントを他のサイトと共用しているとき、キャンペーン名にこの文字を含むものだけを数える（例: "OPEN EX"） */
+  adsCampaignNameContains?: string;
   /** Google広告APIを使わず、GA4にリンクされたGoogle広告の費用・クリックをGA4から取る */
   googleAdsViaGa4?: boolean;
   /** Meta広告アカウントID（act_ は付けても付けなくてもよい） */

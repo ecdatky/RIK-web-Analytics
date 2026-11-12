@@ -18,13 +18,30 @@ export function isDemo(env: Env): boolean {
 /** Google広告を取るかどうか（APIのアカウント指定、またはGA4リンク経由） */
 export const hasGoogleAds = (s: SiteConfig) => !!s.adsCustomerIds?.length || (!!s.googleAdsViaGa4 && !!s.ga4PropertyId);
 
+function parseSites(json: string, name: string): SiteConfig[] {
+  const parsed = JSON.parse(json) as SiteConfig[];
+  if (!Array.isArray(parsed) || parsed.some((s) => !s?.id || !s?.name)) {
+    throw new Error(`${name} の形式が正しくありません（id と name が必須）`);
+  }
+  return parsed;
+}
+
+/**
+ * SITES_JSON（シークレット）のサイトに、SITES_EXTRA_JSON のサイトを足す。
+ * SITES_JSON は差分だけ保存できず丸ごと登録し直す必要があるため、サイトの追加は SITES_EXTRA_JSON（変数）でもできるようにする。
+ * 同じ id があれば SITES_EXTRA_JSON の方で置き換える。
+ */
 export function loadSites(env: Env): SiteConfig[] {
   if (isDemo(env) && !env.SITES_JSON) return DEMO_SITES;
-  const parsed = JSON.parse(env.SITES_JSON!) as SiteConfig[];
-  if (!Array.isArray(parsed) || parsed.some((s) => !s.id || !s.name)) {
-    throw new Error("SITES_JSON の形式が正しくありません（id と name が必須）");
+  const sites = parseSites(env.SITES_JSON!, "SITES_JSON");
+  if (env.SITES_EXTRA_JSON?.trim()) {
+    for (const extra of parseSites(env.SITES_EXTRA_JSON, "SITES_EXTRA_JSON")) {
+      const i = sites.findIndex((s) => s.id === extra.id);
+      if (i >= 0) sites[i] = extra;
+      else sites.push(extra);
+    }
   }
-  return parsed.map(withCurrentUrl);
+  return sites.map(withCurrentUrl);
 }
 
 /** RIKCADのお知らせ画面はRIKシェアのRSSを読むので、RIKシェアのサイトだけ rss 流入を「RIKCADお知らせ」と表示する */
@@ -56,7 +73,7 @@ export async function buildReport(env: Env, site: SiteConfig, range: RangeKey, c
       ),
     hasGoogleAds(site) &&
       (site.adsCustomerIds?.length
-        ? fetchAds(env, site.adsCustomerIds, current, previous).catch((e) => {
+        ? fetchAds(env, site.adsCustomerIds, current, previous, { campaignNameContains: site.adsCampaignNameContains }).catch((e) => {
             // API がまだ使えない間（権限の付与待ちなど）は、GA4 経由の数字で代わりに出す
             if (!site.googleAdsViaGa4 || !site.ga4PropertyId) throw e;
             console.error("google ads api, falling back to ga4", site.id, errMsg(e));

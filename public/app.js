@@ -162,6 +162,7 @@ const STATUS_BASIS = {
   corporate: "製品サイトなどへの送客とサイト内の回遊",
   product: "成果（問い合わせ・資料請求など）",
   media: "RIKCADお知らせ経由の閲覧と、記事を読む人の数",
+  service: "成果（無料アカウント登録・問い合わせなど）",
 };
 const siteOf = (report) => state.sites?.find((s) => s.id === report.siteId);
 const roleOf = (report) => siteOf(report)?.role ?? "product";
@@ -220,7 +221,7 @@ function health(report) {
     add("しっかり読まれた割合", g.engagementRate.current, g.engagementRate.previous, 2, { fmt: fmtPct });
   } else if (g) {
     add("サイトに来た人", g.activeUsers.current, g.activeUsers.previous, 1, { count: true });
-    add("成果（問い合わせ・資料請求など）", g.keyEvents.current, g.keyEvents.previous, 3, { count: true });
+    add(role === "service" ? "成果（アカウント登録・問い合わせなど）" : "成果（問い合わせ・資料請求など）", g.keyEvents.current, g.keyEvents.previous, 3, { count: true });
     add("訪問が成果につながる割合", ratio(g.keyEvents.current, g.sessions.current), ratio(g.keyEvents.previous, g.sessions.previous), 2, { fmt: fmtPct });
   }
   const a = report.ads?.totals;
@@ -1911,10 +1912,11 @@ const askThread = () => {
 const askOpen = () => !$("#ask").hidden;
 
 const ASK_SUGGEST = {
-  summary: ["3サイトで今いちばん手を打つべきところは？", "「いまの状況」の判定はどう決めているの？", "サイトごとに判定が違うのはなぜ？"],
+  summary: ["全サイトで今いちばん手を打つべきところは？", "「いまの状況」の判定はどう決めているの？", "サイトごとに判定が違うのはなぜ？"],
   corporate: ["製品サイトへの送客は増えている？", "よく見られているページから何が分かる？", "問い合わせが少ないのは問題？"],
   product: ["問い合わせ・資料請求が増減した原因は？", "広告費の使い方で見直すべき点は？", "診断でいちばん優先すべき項目は？", "AIからのアクセスはどのくらい来ている？"],
   media: ["RIKCADお知らせ経由の閲覧は増えている？", "よく読まれた記事の傾向は？", "エンゲージメント率ってどういう意味？"],
+  service: ["アカウント登録につながっている流入元は？", "よく見られているページから何が分かる？", "診断でいちばん優先すべき項目は？"],
 };
 
 /** AIの回答の簡単な書式（**太字** と「- 」の箇条書き、段落）だけを、エスケープしてから当てる */
