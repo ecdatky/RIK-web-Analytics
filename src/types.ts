@@ -28,7 +28,7 @@ export interface Env {
 }
 
 /** corporate: コーポレートサイト / product: 製品サイト / media: オウンドメディア（RIKシェア） */
-export type SiteRole = "corporate" | "product" | "media";
+export type SiteRole = "corporate" | "product" | "media" | "service";
 
 export interface SiteConfig {
   id: string;
@@ -36,6 +36,8 @@ export interface SiteConfig {
   url?: string;
   ga4PropertyId?: string;
   adsCustomerIds?: string[];
+  /** Google広告アカウントを他のサイトと共用しているとき、キャンペーン名にこの文字を含むものだけを数える（例: "OPEN EX"） */
+  adsCampaignNameContains?: string;
   /** Google広告APIを使わず、GA4にリンクされたGoogle広告の費用・クリックをGA4から取る */
   googleAdsViaGa4?: boolean;
   /** Meta広告アカウントID（act_ は付けても付けなくてもよい） */

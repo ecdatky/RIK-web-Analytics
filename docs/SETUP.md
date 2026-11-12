@@ -124,6 +124,8 @@ Facebook・Instagram 広告のデータは Meta Marketing API（Insights API）�
 - 1サイトに複数の広告アカウントがある場合は `adsCustomerIds` / `metaAdAccountIds` に並べると合算されます
 - `metaConversionActions`（任意）: Meta広告でCVとして数える action_type の配列。省略時は `["lead"]`
 - `googleAdsViaGa4`（任意）: `true` にすると、Google広告APIの代わりに GA4 にリンクされた Google広告の費用・クリック・表示回数と、Google広告経由のキーイベントを使います。`adsCustomerIds` があればそちらが優先です
+- `adsCampaignNameContains`（任意）: 1つのGoogle広告アカウントを複数のサイトで共用している場合に、キャンペーン名にこの文字を含むものだけを数えます（例: OPEN EX は「GP＆OPEN EX」アカウントをガーデンプラットと共用しているので `"OPEN EX"`）
+- `role`（任意）: サイトの種類 `corporate` / `product` / `media` / `service`。省略時は id・URL から決めます（open-ex.jp は `service`）
 
 ```bash
 npx wrangler secret put SITES_JSON                     # 上のJSONを貼り付け

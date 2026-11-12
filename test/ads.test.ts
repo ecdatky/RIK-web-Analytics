@@ -131,3 +131,34 @@ describe("fetchAds", () => {
     expect(r.ads?.[2].imageUrl).toBe("https://img/display.jpg");
   });
 });
+
+describe("campaignScope", () => {
+  it("指定がなければアカウント全体で集計する", async () => {
+    const { campaignScope } = await import("../src/google/ads");
+    expect(campaignScope()).toEqual({ from: "customer", where: "" });
+    expect(campaignScope("  ")).toEqual({ from: "customer", where: "" });
+  });
+
+  it("キャンペーン名で絞り込み、LIKE の特殊文字は文字として扱う", async () => {
+    const { campaignScope } = await import("../src/google/ads");
+    expect(campaignScope("OPEN EX")).toEqual({ from: "campaign", where: " AND campaign.name LIKE '%OPEN EX%'" });
+    expect(campaignScope("50%_off")).toEqual({ from: "campaign", where: " AND campaign.name LIKE '%50[%][_]off%'" });
+  });
+
+  it("共用アカウントでは全クエリをキャンペーン名で絞る", async () => {
+    const queries: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        if (url.includes("oauth2")) return Response.json({ access_token: "tok", expires_in: 3600 });
+        queries.push(JSON.parse(String(init.body)).query as string);
+        return Response.json([{ results: [] }]);
+      }),
+    );
+    await fetchAds(env, ["123"], { startDate: "2026-10-10", endDate: "2026-10-16" }, { startDate: "2026-10-03", endDate: "2026-10-09" }, { campaignNameContains: "OPEN EX" });
+    const scoped = queries.filter((q) => !q.includes("FROM asset_group_asset") && !q.includes("FROM asset "));
+    expect(scoped.length).toBeGreaterThanOrEqual(8);
+    for (const q of scoped) expect(q).toContain("campaign.name LIKE '%OPEN EX%'");
+    expect(queries.some((q) => q.includes("FROM customer"))).toBe(false);
+  });
+});

@@ -23,7 +23,7 @@ const PROFILES: Record<SiteRole, SiteProfile> = {
     purpose:
       "RIKのイベント・ニュースや、どんな会社か・なんの会社かを調べたい人に会社の情報を正しく伝える。RIKの各種サービスを紹介し、詳しいサイト（製品サイトなど）への入口になる。RIKCADやその他製品に興味がある人に、このサイトを通じてRIKの信頼性と興味を高め、将来の顧客に育てる。",
     kpis: ["製品サイトなど各サイトへの送客（リンクのクリック）", "サイト内の回遊（1訪問あたりのページ数・エンゲージメント率）", "訪問者数", "問い合わせ（主目的ではない）"],
-    sendTo: ["products.rikcorp.jp", "info.rikcorp.jp", "share.rikcorp.jp", "rik-support.net"],
+    sendTo: ["products.rikcorp.jp", "info.rikcorp.jp", "share.rikcorp.jp", "rik-support.net", "open-ex.jp"],
   },
   product: {
     role: "product",
@@ -39,7 +39,19 @@ const PROFILES: Record<SiteRole, SiteProfile> = {
     purpose: "RIKCADユーザーに正しい情報や最新の情報を伝える。投稿はRIKCAD起動時のお知らせ画面に自動で表示される。",
     kpis: ["RIKCADお知らせ経由の閲覧（訪問・ユーザー数）", "記事がしっかり読まれた割合（エンゲージメント率）", "訪問者数", "問い合わせ・資料請求は目的にしない"],
   },
+  // OPEN EX 業務管理（https://open-ex.jp/）。2026-11-12 追加。対象・目的は仮置きで、マーケティンググループの確認待ち
+  service: {
+    role: "service",
+    label: "サービスの魅力を伝え、無料のアカウント登録・問い合わせにつなげる",
+    audience: "外構・エクステリアの販売・施工店（RIKCADユーザーを含む）で、案件・顧客・図面・写真・発注・工程の管理を効率化したい経営者・担当者",
+    purpose:
+      "外構案件の業務管理クラウド「OPEN EX 業務管理」の機能・導入事例・料金（無料で始められること）を伝え、無料のアカウント登録（open-ex.net）、資料ダウンロード、問い合わせ・セミナー申込につなげる。",
+    kpis: ["無料アカウント登録への遷移（キーイベント）", "資料ダウンロード・問い合わせ", "訪問が登録・問い合わせにつながる割合", "広告の1件あたりの費用", "訪問者数"],
+  },
 };
+
+/** OPEN EX 業務管理のサイト（open-ex.jp）。登録・ログイン後のサービス本体は open-ex.net */
+export const OPENEX_URL = /open-ex\.jp/;
 
 /** RIKシェアのURL。2026-11-02 に www.rik-support.net/share/ から share.rikcorp.jp に移設した（旧URLは新URLへ転送） */
 export const RIKSHARE_URL = /rik-support\.net\/share|share\.rikcorp\.jp/;
@@ -57,6 +69,7 @@ export function siteRole(site: Pick<SiteConfig, "id" | "url" | "role">): SiteRol
   const id = site.id.toLowerCase();
   const url = site.url ?? "";
   if (id === "rikshare" || RIKSHARE_URL.test(url)) return "media";
+  if (id === "openex" || OPENEX_URL.test(url)) return "service";
   if (id === "corp" || id === "corporate" || /\/\/(www\.)?rikcorp\.jp/.test(url)) return "corporate";
   return "product";
 }

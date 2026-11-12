@@ -179,7 +179,7 @@ function diagnoseGa4(g: Ga4Report, profile: SiteProfile, items: DiagnosisItem[],
   if (g.totals.sessions.current < 50) return;
   if (profile.role === "corporate") return diagnoseCorporate(g, profile, items, passed, prevName);
   if (profile.role === "media") return diagnoseMedia(g, items, passed, prevName);
-  diagnoseConversions(g, items, passed);
+  diagnoseConversions(g, profile, items, passed);
 }
 
 /** 入口ページの離脱（訪問の多いページでエンゲージメントが低い） */
@@ -203,8 +203,8 @@ function weakLanding(g: Ga4Report, items: DiagnosisItem[], action: string) {
   });
 }
 
-/** 製品サイト（と種類の決まらないサイト）：問い合わせ・資料請求につながっているか */
-function diagnoseConversions(g: Ga4Report, items: DiagnosisItem[], passed: string[]) {
+/** 製品サイト・OPEN EX（と種類の決まらないサイト）：問い合わせ・資料請求・アカウント登録につながっているか */
+function diagnoseConversions(g: Ga4Report, profile: SiteProfile, items: DiagnosisItem[], passed: string[]) {
   const t = g.totals;
   const sessions = t.sessions.current;
   const kev = t.keyEvents.current;
@@ -217,7 +217,10 @@ function diagnoseConversions(g: Ga4Report, items: DiagnosisItem[], passed: strin
       severity: "high",
       title: "成果（キーイベント）が1件も記録されていません",
       evidence: `訪問 ${int(sessions)}回に対してキーイベント 0件。`,
-      action: "問い合わせ送信・資料請求の完了などのイベントを、GA4でキーイベントとして設定する。",
+      action:
+        profile.role === "service"
+          ? "無料アカウント登録への遷移（イベント「アカウント登録（フォーム遷移）」）や、資料ダウンロード・問い合わせの完了を、GA4でキーイベントとして設定する。"
+          : "問い合わせ送信・資料請求の完了などのイベントを、GA4でキーイベントとして設定する。",
       where: "GA4 > 管理 > イベント > 対象イベントの「キーイベントとしてマーク」",
     });
     return;
